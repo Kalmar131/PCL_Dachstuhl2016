@@ -1,5 +1,9 @@
 #include <iostream>
 #include <pcl/ModelCoefficients.h>
+#include <pcl/PolygonMesh.h>
+#include <pcl/common/centroid.h>
+#include <pcl/common/common.h>
+#include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
@@ -17,66 +21,177 @@
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/surface/concave_hull.h>
 #include <pcl/surface/mls.h>
+#include <pcl/visualization/pcl_visualizer.h>
 
 typedef pcl::PointXYZ Point;
 typedef pcl::PointCloud<Point> Cloud;
 
+pcl::PolygonMesh::Ptr createMesh(Cloud::Ptr cloudInput)
+{
+	std::vector<Eigen::Vector3f> directions;
+
+	for (unsigned i = 0; i < cloudInput->points.size(); ++i)
+	{
+		Eigen::Vector3f p1;
+		p1(0) = cloudInput->points[i].x;
+		p1(1) = cloudInput->points[i].y;
+		p1(2) = cloudInput->points[i].z;
+		
+		Eigen::Vector3f p2;
+		p2(0) = cloudInput->points[i+1].x;
+		p2(1) = cloudInput->points[i+1].y;
+		p2(2) = cloudInput->points[i+1].z;
+		
+		Eigen::Vector3f v = p1-p2;
+		v = v/::sqrt(v.dot(v));
+		directions.push_back(v);
+	}
+
+	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+	for (unsigned i = 0; i < directions.size(); ++i)
+	{
+		for (unsigned j = i+1; j < directions.size(); ++j)
+		{
+			Eigen::Vector3f v = directions[i].cross(directions[j]); 
+
+			if (::abs(v.dot(v)) < 0.05)
+			{
+				if (directions[i].dot(directions[j]) < 0)
+				{
+					pcl::Vertices polygon;
+					polygon.vertices.push_back(i*2);
+					polygon.vertices.push_back(i*2+1);
+					polygon.vertices.push_back(j*2);
+					polygon.vertices.push_back(j*2+1);
+
+					meshOutput->polygons.push_back(polygon);
+				}
+				else
+				{
+					pcl::Vertices polygon;
+					polygon.vertices.push_back(i*2);
+					polygon.vertices.push_back(i*2+1);
+					polygon.vertices.push_back(j*2+1);
+					polygon.vertices.push_back(j*2);
+
+					meshOutput->polygons.push_back(polygon);
+				}
+			}
+		}
+	}
+
+	return meshOutput;
+}
 
 float distance(Point p1, Point p2)
 {
     return ::sqrt(::pow((p1.x-p2.x), 2) + ::pow((p1.y-p2.y), 2) + ::pow((p1.z-p2.z), 2));
 }
 
-std::pair<int, int> get_min_max(Cloud::Ptr cloud)
+Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
 {
-    int max_i = 0;
-    int max_j = 0;
-    float max_dist = 0;
-    for (unsigned i = 0; i < cloud->points.size()-1; ++i)
-        for (unsigned j = i; j < cloud->points.size()-1; ++j)
-        {
-            if (distance(cloud->points[i],  cloud->points[j]) > max_dist)
-            {
-                max_i = i;
-                max_j = j;
-                max_dist = distance(cloud->points[i],  cloud->points[j]);
-            }
-        }
+	int max_i = 0;
+	int max_j = 0;
+	float max_dist = 0;
+	for (unsigned i = 0; i < cloudInput->points.size()-1; ++i)
+		for (unsigned j = i; j < cloudInput->points.size()-1; ++j)
+		{
+			if (distance(cloudInput->points[i],  cloudInput->points[j]) > max_dist)
+			{
+				max_i = i;
+				max_j = j;
+				max_dist = distance(cloudInput->points[i],  cloudInput->points[j]);
+			}
+		}
 
-    return std::pair<int, int>(max_i,max_j);
+	Cloud::Ptr cloudOutput(new Cloud);
+	cloudOutput->points.push_back(cloudInput->points[max_i]);
+	cloudOutput->points.push_back(cloudInput->points[max_j]);
+
+	return cloudOutput;
 }
 
-void saveLines(std::vector<Point> lines)
+void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
 {
-    printf("ply\n");
-    printf("format ascii 1.0\n");
-    printf("element vertex %d\n", lines.size()*2);
-    printf("property float x\n");
-    printf("property float y\n");
-    printf("property float z\n");
-    printf("element line %d\n", lines.size());
-    printf("property vertex_index\n");
-    printf("end_header\n");
+	std::ofstream file;
+  	file.open(fileName.c_str());
 
-    for (unsigned n = 0; n < lines.size(); n+=2)
-    {
-        printf("%f %f %f\n",
-            lines[n].x,
-            lines[n].y,
-            lines[n].z);
-        printf("%f %f %f\n",
-            lines[n+1].x,
-            lines[n+1].y,
-            lines[n+1].z);
+	file << "ply\n";
+	file << "format ascii 1.0\n";
+	file << "element vertex " << cloudInput->points.size() << "\n";
+	file << "property float x\n";
+	file << "property float y\n";
+	file << "property float z\n";
+	file << "element edge " << cloudInput->points.size()/2 << "\n";
+	file << "property int vertex1\n";
+	file << "property int vertex2\n";
+	file << "end_header\n";
 
-    }
+	for (unsigned n = 0; n < cloudInput->points.size(); n+=2)
+	{
+		file << cloudInput->points[n].x << " ";
+		file << cloudInput->points[n].y << " ";
+		file << cloudInput->points[n].z << "\n";
 
-    for (unsigned n = 0; n < lines.size(); ++n)
-    {
-        printf("%d %d\n", 2*n, 2*n+1);
-    }
+		file << cloudInput->points[n+1].x << " ";
+		file << cloudInput->points[n+1].y << " ";
+		file << cloudInput->points[n+1].z << "\n";
+	}
+
+	for (unsigned n = 0; n < cloudInput->points.size(); n+=2)
+	{
+		file << n << " " << n+1 << "\n";
+	}
+
+	file.close();
 }
 
+Cloud::Ptr getMinimalBoundingBox(Cloud::Ptr cloud)
+{
+	// Compute principal directions
+	Eigen::Vector4f pcaCentroid;
+	pcl::compute3DCentroid(*cloud, pcaCentroid);
+	Eigen::Matrix3f covariance;
+	computeCovarianceMatrixNormalized(*cloud, pcaCentroid, covariance);
+	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigenSolver(covariance, Eigen::ComputeEigenvectors);
+	Eigen::Matrix3f eigenVectorsPCA = eigenSolver.eigenvectors();
+	eigenVectorsPCA.col(2) = eigenVectorsPCA.col(0).cross(eigenVectorsPCA.col(1));
+	/// This line is necessary for proper orientation in some cases. The numbers come out the same without it, but
+	/// the signs are different and the box doesn't get correctly oriented in some cases.
+
+	/*
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloudPCAprojection (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PCA<pcl::PointXYZ> pca;
+	pca.setInputCloud(cloud);
+	pca.project(*cloud, *cloudPCAprojection);
+	std::cerr << std::endl << "EigenVectors: " << pca.getEigenVectors() << std::endl;
+	std::cerr << std::endl << "EigenValues: " << pca.getEigenValues() << std::endl;
+	 */
+
+	// Transform the original cloud to the origin where the principal components correspond to the axes.
+	Cloud::Ptr cloudProjected(new Cloud);
+
+	Eigen::Matrix4f projectionTransform(Eigen::Matrix4f::Identity());
+	projectionTransform.block<3,3>(0,0) = eigenVectorsPCA.transpose();
+	projectionTransform.block<3,1>(0,3) = -1.f * (projectionTransform.block<3,3>(0,0) * pcaCentroid.head<3>());
+	pcl::transformPointCloud(*cloud, *cloudProjected, projectionTransform);
+	Point minPoint, maxPoint;
+	pcl::getMinMax3D(*cloudProjected, minPoint, maxPoint);
+
+	// rotation and translation
+	const Eigen::Quaternionf bboxQuaternion(eigenVectorsPCA);
+	const Eigen::Vector3f meanDiagonal = 0.5f*(maxPoint.getVector3fMap() + minPoint.getVector3fMap());
+	const Eigen::Vector3f bboxTransform = eigenVectorsPCA * meanDiagonal + pcaCentroid.head<3>();
+
+	vtkSmartPointer<vtkDataSet> cube = pcl::visualization::createCube(bboxTransform, bboxQuaternion, maxPoint.x - minPoint.x, maxPoint.y - minPoint.y, maxPoint.z - minPoint.z);
+
+	Cloud::Ptr cloudOutput(new Cloud);
+
+	for (int i = 0; i < cube->GetNumberOfPoints() and i < 8; i+=1)
+		cloudOutput->points.push_back(Point(cube->GetPoint(i)[0], cube->GetPoint(i)[1], cube->GetPoint(i)[2]));
+
+	return cloudOutput;
+}
 
 std::vector<float> getMinmax(Cloud::Ptr cloudInput)
 {
@@ -547,6 +662,42 @@ int main (int argc, char** argv)
 			std::cerr << "Index: " << i << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
 			pcl::io::savePLYFile(createFilename(outFilename, i), *cloudOutput);
 		}
+	}
+
+	else if (toolname == "get-lines")
+	{
+		std::vector<std::string> inFilenameList;
+		while (argn < (argc-1))
+			inFilenameList.push_back(argv[argn++]);
+		const char* outFilename = argv[argn++];
+
+		Cloud::Ptr cloudOutput(new Cloud);
+		for (unsigned i = 0; i < inFilenameList.size(); ++i)
+		{
+			pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+			pcl::io::loadPLYFile(inFilenameList[i], *cloudInput);
+			std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+			cloudOutput = merge(cloudOutput, getMaxDistance(cloudInput));
+		}
+
+		std::cerr << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput);
+	}
+	else if (toolname == "create-mesh")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PolygonMesh::Ptr meshOutput = createMesh(cloudInput);
+
+		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
 	return (0);
