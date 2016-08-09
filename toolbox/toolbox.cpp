@@ -26,11 +26,11 @@
 typedef pcl::PointXYZ Point;
 typedef pcl::PointCloud<Point> Cloud;
 
-pcl::PolygonMesh::Ptr createMesh(Cloud::Ptr cloudInput)
+pcl::PolygonMesh::Ptr extractFaces(Cloud::Ptr cloudInput)
 {
 	std::vector<Eigen::Vector3f> directions;
 
-	for (unsigned i = 0; i < cloudInput->points.size(); ++i)
+	for (unsigned i = 0; i < cloudInput->points.size(); i+=2)
 	{
 		Eigen::Vector3f p1;
 		p1(0) = cloudInput->points[i].x;
@@ -48,6 +48,8 @@ pcl::PolygonMesh::Ptr createMesh(Cloud::Ptr cloudInput)
 	}
 
 	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+	pcl::toPCLPointCloud2(*cloudInput, meshOutput->cloud);
+
 	for (unsigned i = 0; i < directions.size(); ++i)
 	{
 		for (unsigned j = i+1; j < directions.size(); ++j)
@@ -88,7 +90,7 @@ float distance(Point p1, Point p2)
     return ::sqrt(::pow((p1.x-p2.x), 2) + ::pow((p1.y-p2.y), 2) + ::pow((p1.z-p2.z), 2));
 }
 
-Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
+Cloud::Ptr extractEdges(Cloud::Ptr cloudInput)
 {
 	int max_i = 0;
 	int max_j = 0;
@@ -225,14 +227,35 @@ std::vector<float> getMinmax(Cloud::Ptr cloudInput)
 
 Cloud::Ptr merge(Cloud::Ptr cloudOutput, Cloud::Ptr cloudInput)
 {
-	for (unsigned i = 0; i < cloudInput->points.size(); ++i)
+	*cloudOutput += *cloudInput;
+	return cloudOutput;
+}
+
+pcl::PolygonMesh::Ptr merge(pcl::PolygonMesh::Ptr meshOutput, pcl::PolygonMesh::Ptr meshInput)
+{
+	Cloud cloudOutput;
+	Cloud cloudInput;
+
+	pcl::fromPCLPointCloud2(meshOutput->cloud, cloudOutput);
+	pcl::fromPCLPointCloud2(meshInput->cloud, cloudInput);
+
+	unsigned offset = cloudOutput.points.size();
+	cloudOutput += cloudInput;
+
+	pcl::toPCLPointCloud2(cloudOutput, meshOutput->cloud);
+
+	for (unsigned i = 0; i < meshInput->polygons.size(); ++i)
 	{
-		cloudOutput->points.push_back(cloudInput->points[i]);
+		pcl::Vertices polygon;
+		for (unsigned j = 0; j < meshInput->polygons[i].vertices.size(); ++j)
+		{
+				polygon.vertices.push_back(meshInput->polygons[i].vertices[j]+offset);
+		}
+
+		meshOutput->polygons.push_back(polygon);
 	}
 
-	//cloudOutput.size(cloudOutput.size() + cloudInput.size());
-
-	return cloudOutput;
+	return meshOutput;
 }
 
 Cloud::Ptr passThrough(Cloud::Ptr cloudInput, const char* fieldName, float min, float max)
@@ -630,7 +653,7 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
-	else if (toolname == "xxx")
+	else if (toolname == "model-segment")
 	{
 		int modelType = getModelType(argv[argn++]);
 		float threshold = atof(argv[argn++]);
@@ -664,28 +687,7 @@ int main (int argc, char** argv)
 		}
 	}
 
-	else if (toolname == "get-lines")
-	{
-		std::vector<std::string> inFilenameList;
-		while (argn < (argc-1))
-			inFilenameList.push_back(argv[argn++]);
-		const char* outFilename = argv[argn++];
-
-		Cloud::Ptr cloudOutput(new Cloud);
-		for (unsigned i = 0; i < inFilenameList.size(); ++i)
-		{
-			pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
-
-			pcl::io::loadPLYFile(inFilenameList[i], *cloudInput);
-			std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
-
-			cloudOutput = merge(cloudOutput, getMaxDistance(cloudInput));
-		}
-
-		std::cerr << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		savePLYEdges(outFilename, cloudOutput);
-	}
-	else if (toolname == "create-mesh")
+	else if (toolname == "extract-edges")
 	{
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
@@ -695,8 +697,47 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		pcl::PolygonMesh::Ptr meshOutput = createMesh(cloudInput);
+		Cloud::Ptr cloudOutput = extractEdges(cloudInput);
 
+		std::cerr << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput);
+	}
+
+	else if (toolname == "extract-faces")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PolygonMesh::Ptr meshOutput = extractFaces(cloudInput);
+
+		std::cerr << " Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *meshOutput);
+	}
+
+	else if (toolname == "create-mesh")
+	{
+		std::vector<std::string> inFilenameList;
+		while (argn < (argc-1))
+			inFilenameList.push_back(argv[argn++]);
+		const char* outFilename = argv[argn++];
+
+		pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+		for (unsigned i = 0; i < inFilenameList.size(); ++i)
+		{
+			pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+			pcl::io::loadPLYFile(inFilenameList[i], *cloudInput);
+			std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+			meshOutput = merge(meshOutput, extractFaces(extractEdges(cloudInput)));
+		}
+
+		std::cerr << " Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
