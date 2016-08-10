@@ -3,6 +3,7 @@
 #include <pcl/PolygonMesh.h>
 #include <pcl/common/centroid.h>
 #include <pcl/common/common.h>
+#include <pcl/common/pca.h>
 #include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree.h>
 #include <pcl/io/pcd_io.h>
@@ -148,7 +149,86 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
 	file.close();
 }
 
-Cloud::Ptr getMinimalBoundingBox(Cloud::Ptr cloud)
+pcl::PolygonMesh::Ptr getBoundingBox(Cloud::Ptr cloud)
+{
+	Cloud proj; 
+	pcl::PCA< Point > pca; 
+	pca.setInputCloud(cloud); 
+	pca.project(*cloud, proj); 
+
+	Point proj_min; 
+	Point proj_max; 
+	pcl::getMinMax3D(proj, proj_min, proj_max);
+
+	std::vector<Point> projPointList;
+	projPointList.push_back(proj_min);
+	projPointList.push_back(Point(proj_max.x, proj_min.y, proj_min.z)); 
+	projPointList.push_back(Point(proj_min.x, proj_max.y, proj_min.z)); 
+	projPointList.push_back(Point(proj_max.x, proj_max.y, proj_min.z)); 
+	projPointList.push_back(proj_max);
+	projPointList.push_back(Point(proj_max.x, proj_min.y, proj_max.z)); 
+	projPointList.push_back(Point(proj_min.x, proj_max.y, proj_max.z)); 
+	projPointList.push_back(Point(proj_max.x, proj_max.y, proj_max.z)); 
+
+	std::vector<Point> pointList(projPointList.size());
+	for (unsigned i = 0; i < projPointList.size(); ++i) 
+		pca.reconstruct(projPointList[i], pointList[i]); 
+
+	Cloud::Ptr cloudOutput(new Cloud);
+	for (unsigned i = 0; i < pointList.size(); ++i) 
+		cloudOutput->points.push_back(pointList[i]);
+
+	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+	pcl::toPCLPointCloud2(*cloudOutput, meshOutput->cloud);
+
+	pcl::Vertices polygon;
+
+	polygon.vertices.push_back(0);
+	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(2);
+	polygon.vertices.push_back(3);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(4);
+	polygon.vertices.push_back(5);
+	polygon.vertices.push_back(6);
+	polygon.vertices.push_back(7);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(0);
+	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(6);
+	polygon.vertices.push_back(7);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(2);
+	polygon.vertices.push_back(3);
+	polygon.vertices.push_back(4);
+	polygon.vertices.push_back(5);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(0);
+	polygon.vertices.push_back(2);
+	polygon.vertices.push_back(5);
+	polygon.vertices.push_back(6);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(3);
+	polygon.vertices.push_back(4);
+	polygon.vertices.push_back(7);
+	meshOutput->polygons.push_back(polygon);
+
+	return meshOutput;	
+}
+
+#if 0
+Cloud::Ptr getBoundingBox(Cloud::Ptr cloud)
 {
 	// Compute principal directions
 	Eigen::Vector4f pcaCentroid;
@@ -194,6 +274,7 @@ Cloud::Ptr getMinimalBoundingBox(Cloud::Ptr cloud)
 
 	return cloudOutput;
 }
+#endif
 
 std::vector<float> getMinmax(Cloud::Ptr cloudInput)
 {
@@ -444,6 +525,7 @@ int main (int argc, char** argv)
 {
 	unsigned argn = 1;
 	std::string toolname = argv[argn++];
+	std::cerr << toolname << std::endl;
 
 	if (toolname == "get-minmax")
 	{
@@ -455,6 +537,22 @@ int main (int argc, char** argv)
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
 		std::vector<float> minmax = getMinmax(cloudInput);
+	}
+
+	else if (toolname == "get-bounding-box")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PolygonMesh::Ptr meshOutput = getBoundingBox(cloudInput);
+
+		std::cerr << "Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
 	else if (toolname == "pass-through")
@@ -651,6 +749,28 @@ int main (int argc, char** argv)
 
 		std::cerr << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
+	}
+
+	else if (toolname == "merge-mesh")
+	{
+		std::vector<std::string> inFilenameList;
+		while (argn < (argc-1))
+			inFilenameList.push_back(argv[argn++]);
+		const char* outFilename = argv[argn++];
+
+		pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+		for (unsigned i = 0; i < inFilenameList.size(); ++i)
+		{
+			pcl::PolygonMesh::Ptr meshInput(new pcl::PolygonMesh);
+
+			pcl::io::loadPLYFile(inFilenameList[i], *meshInput);
+			std::cerr << "Index: " << i << " Input Cloud Size: " << meshInput->polygons.size() << std::endl;
+
+			meshOutput = merge(meshOutput, meshInput);
+		}
+
+		std::cerr << " Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
 	else if (toolname == "model-segment")
