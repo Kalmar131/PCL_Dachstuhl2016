@@ -165,10 +165,10 @@ pcl::PolygonMesh::Ptr getBoundingBox(Cloud::Ptr cloud)
 	projPointList.push_back(Point(proj_max.x, proj_min.y, proj_min.z)); 
 	projPointList.push_back(Point(proj_min.x, proj_max.y, proj_min.z)); 
 	projPointList.push_back(Point(proj_max.x, proj_max.y, proj_min.z)); 
-	projPointList.push_back(proj_max);
+	projPointList.push_back(Point(proj_min.x, proj_min.y, proj_max.z)); 
 	projPointList.push_back(Point(proj_max.x, proj_min.y, proj_max.z)); 
 	projPointList.push_back(Point(proj_min.x, proj_max.y, proj_max.z)); 
-	projPointList.push_back(Point(proj_max.x, proj_max.y, proj_max.z)); 
+	projPointList.push_back(proj_max);
 
 	std::vector<Point> pointList(projPointList.size());
 	for (unsigned i = 0; i < projPointList.size(); ++i) 
@@ -198,29 +198,29 @@ pcl::PolygonMesh::Ptr getBoundingBox(Cloud::Ptr cloud)
 
 	polygon.vertices.clear();
 	polygon.vertices.push_back(0);
-	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(2);
+	polygon.vertices.push_back(4);
 	polygon.vertices.push_back(6);
+	meshOutput->polygons.push_back(polygon);
+
+	polygon.vertices.clear();
+	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(3);
+	polygon.vertices.push_back(5);
 	polygon.vertices.push_back(7);
 	meshOutput->polygons.push_back(polygon);
 
 	polygon.vertices.clear();
-	polygon.vertices.push_back(2);
-	polygon.vertices.push_back(3);
-	polygon.vertices.push_back(4);
-	polygon.vertices.push_back(5);
-	meshOutput->polygons.push_back(polygon);
-
-	polygon.vertices.clear();
 	polygon.vertices.push_back(0);
-	polygon.vertices.push_back(2);
+	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(4);
 	polygon.vertices.push_back(5);
-	polygon.vertices.push_back(6);
 	meshOutput->polygons.push_back(polygon);
 
 	polygon.vertices.clear();
-	polygon.vertices.push_back(1);
+	polygon.vertices.push_back(2);
 	polygon.vertices.push_back(3);
-	polygon.vertices.push_back(4);
+	polygon.vertices.push_back(6);
 	polygon.vertices.push_back(7);
 	meshOutput->polygons.push_back(polygon);
 
@@ -703,6 +703,8 @@ int main (int argc, char** argv)
 
 	else if (toolname == "slice")
 	{
+		float start = atof(argv[argn++]);
+		float end = atof(argv[argn++]);
 		int numSlices = atoi(argv[argn++]);
 		const char* fieldName = argv[argn++];
 		const char* inFilename = argv[argn++];
@@ -713,15 +715,11 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		std::vector<float> minmax = getMinmax(cloudInput);
-
-		unsigned fieldMinIndex = std::string(fieldName) == "x" ? 0 : (std::string(fieldName) == "y" ? 1 : 2);
-		unsigned fieldMaxIndex = fieldMinIndex + 3;
-
+		std::cerr << "hello:" << numSlices << std::endl;
 		for (unsigned i = 0; i < numSlices; ++i)
 		{
-			float min = minmax[fieldMinIndex] + (minmax[fieldMaxIndex]-minmax[fieldMinIndex])/numSlices * (i+0);
-			float max = minmax[fieldMinIndex] + (minmax[fieldMaxIndex]-minmax[fieldMinIndex])/numSlices * (i+1);
+			float min = start + (end-start)/numSlices * (i+0);
+			float max = start + (end-start)/numSlices * (i+1);
 			Cloud::Ptr cloudOutput = passThrough(cloudInput, fieldName, min, max);
 
 			std::cerr << "Index: " << i << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
@@ -729,7 +727,7 @@ int main (int argc, char** argv)
 		}
 	}
 
-	else if (toolname == "merge")
+	else if (toolname == "merge-cloud")
 	{
 		std::vector<std::string> inFilenameList;
 		while (argn < (argc-1))
