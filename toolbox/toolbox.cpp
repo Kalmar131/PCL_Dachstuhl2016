@@ -916,7 +916,6 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		std::cerr << "hello:" << numSlices << std::endl;
 		for (unsigned i = 0; i < numSlices; ++i)
 		{
 			float min = start + (end-start)/numSlices * (i+0);
