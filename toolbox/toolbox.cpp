@@ -9,6 +9,7 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/point_types.h>
+#include <pcl/features/normal_3d.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/radius_outlier_removal.h>
@@ -151,7 +152,7 @@ float distance(Point point, std::vector<Point> listPoints)
 	return out;
 } 
 
-Cloud::Ptr extractEdges(Cloud::Ptr cloudInput)
+Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
 {
 	int max_i = 0;
 	int max_j = 0;
@@ -322,14 +323,26 @@ std::vector<Point> createConvexHull(Point min, Point max)
 
 //----------------------------------------------------------------
 
-pcl::PolygonMesh::Ptr createSurface(std::vector<Point> pointList)
+Cloud::Ptr getMinMax(Cloud::Ptr cloudInput)
 {
 	Cloud::Ptr cloudOutput(new Cloud);
-	for (unsigned i = 0; i < pointList.size(); ++i) 
-		cloudOutput->points.push_back(pointList[i]);
 
+	Point min;
+	Point max;
+
+	pcl::getMinMax3D(*cloudInput, min, max);
+
+	cloudOutput->points.push_back(min);
+	cloudOutput->points.push_back(max);
+
+	return cloudOutput;
+}
+
+// create surface for bounding box
+pcl::PolygonMesh::Ptr makeSurface(Cloud::Ptr cloudInput)
+{
 	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
-	pcl::toPCLPointCloud2(*cloudOutput, meshOutput->cloud);
+	pcl::toPCLPointCloud2(*cloudInput, meshOutput->cloud);
 
 	meshOutput->polygons.push_back(createPolygon(0, 1, 2, 3));
 	meshOutput->polygons.push_back(createPolygon(4, 5, 6, 7));
@@ -633,6 +646,21 @@ Cloud::Ptr filterByIndices(Cloud::Ptr cloudInput, pcl::PointIndices::Ptr indices
 	return cloudOutput;
 }
 
+pcl::PointCloud<pcl::Normal>::Ptr estimateNormals(Cloud::Ptr cloudInput, float radius)
+{
+	pcl::PointCloud<pcl::Normal>::Ptr cloudOutput(new pcl::PointCloud<pcl::Normal>);
+
+	pcl::search::KdTree<Point>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
+
+	pcl::NormalEstimation<Point, pcl::Normal> tool;
+	tool.setInputCloud(cloudInput);
+	tool.setSearchMethod(tree);
+	tool.setRadiusSearch(radius);
+	tool.compute(*cloudOutput);
+
+	return cloudOutput;
+}
+
 int getModelType(std::string modelName)
 {
 	int modelType;
@@ -678,6 +706,22 @@ int main (int argc, char** argv)
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
 		std::vector<float> minmax = getMinmax(cloudInput);
+	}
+
+	else if (toolname == "make-surface")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PolygonMesh::Ptr meshOutput = makeSurface(cloudInput);
+
+		std::cerr << "Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
 	else if (toolname == "get-bounding-box")
@@ -751,7 +795,23 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
-	else if (toolname  == "concave-hull")
+	else if (toolname == "min-max")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		Cloud::Ptr cloudOutput = getMinMax(cloudInput);
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
+	}
+
+	else if (toolname == "concave-hull")
 	{
 		float alpha = atof(argv[argn++]);
 		const char* inFilename = argv[argn++];
@@ -946,7 +1006,7 @@ int main (int argc, char** argv)
 		}
 	}
 
-	else if (toolname == "extract-edges")
+	else if (toolname == "get-max-distance")
 	{
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
@@ -956,10 +1016,10 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		Cloud::Ptr cloudOutput = extractEdges(cloudInput);
+		Cloud::Ptr cloudOutput = getMaxDistance(cloudInput);
 
 		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		savePLYEdges(outFilename, cloudOutput);
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
 	else if (toolname == "extract-faces")
@@ -978,6 +1038,40 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
+	else if (toolname == "estimate-normals")
+	{
+		float radius = atof(argv[argn++]);
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PointCloud<pcl::Normal>::Ptr cloudOutput = estimateNormals(cloudInput, radius);
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
+	}
+
+	else if (toolname == "create-edges")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		// nothing to do here
+		Cloud::Ptr cloudOutput = cloudInput;
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput);
+	}
+
 	else if (toolname == "create-mesh")
 	{
 		std::vector<std::string> inFilenameList;
@@ -993,7 +1087,8 @@ int main (int argc, char** argv)
 			pcl::io::loadPLYFile(inFilenameList[i], *cloudInput);
 			std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-			meshOutput = merge(meshOutput, extractFaces(extractEdges(cloudInput)));
+			meshOutput = merge(meshOutput, extractFaces(getMinMax(cloudInput)));
+			std::cerr << "output Mesh Size: " << meshOutput->polygons.size() << std::endl;
 		}
 
 		std::cerr << "Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
@@ -1024,7 +1119,7 @@ int main (int argc, char** argv)
 		pcl::PointCloud<Point>::Ptr cloudRef(new Cloud);
 
 		pcl::io::loadPLYFile(refFilename, *cloudRef);
-		std::cerr << "Refernce Cloud Size: " << cloudRef->points.size() << std::endl;
+		std::cerr << "Reference Cloud Size: " << cloudRef->points.size() << std::endl;
 		
 		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
 
@@ -1036,7 +1131,7 @@ int main (int argc, char** argv)
 
 		std::vector<Point> boxOut = alignBox(boxRef, boxIn);
 
-		pcl::PolygonMesh::Ptr meshOutput = createSurface(boxOut); 
+		pcl::PolygonMesh::Ptr meshOutput = makeSurface(toCloud(boxOut)); 
 
     std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
     pcl::io::savePLYFile(outFilename, *meshOutput);
