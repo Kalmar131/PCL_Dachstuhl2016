@@ -21,6 +21,7 @@
 #include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/region_growing.h>
 #include <pcl/surface/concave_hull.h>
 #include <pcl/surface/mls.h>
 #include <pcl/visualization/pcl_visualizer.h>
@@ -173,6 +174,12 @@ Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
 	cloudOutput->points.push_back(cloudInput->points[max_j]);
 
 	return cloudOutput;
+}
+
+void savePLYFile(std::string filename, Cloud::Ptr cloudInput)
+{
+	pcl::PLYWriter writer;
+	writer.write<Point>(filename, *cloudInput, false, false);
 }
 
 void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
@@ -564,10 +571,23 @@ pcl::PointCloud<pcl::PointNormal>::Ptr movingLeastSquares(Cloud::Ptr cloudInput,
 	return cloudOutput;
 }
 
+pcl::PointCloud<pcl::Normal>::Ptr estimateNormals(Cloud::Ptr cloudInput, float radius)
+{
+	pcl::PointCloud<pcl::Normal>::Ptr cloudOutput(new pcl::PointCloud<pcl::Normal>);
+
+	pcl::search::KdTree<Point>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
+
+	pcl::NormalEstimation<Point, pcl::Normal> tool;
+	tool.setInputCloud(cloudInput);
+	tool.setSearchMethod(tree);
+	tool.setRadiusSearch(radius);
+	tool.compute(*cloudOutput);
+
+	return cloudOutput;
+}
+
 std::vector<Cloud::Ptr> euclidianClustering(Cloud::Ptr cloudInput, float clusterTolerance, int minClusterSize, int maxClusterSize)
 {
-	std::vector<Cloud::Ptr> listCloudOutput;
-
 	pcl::search::KdTree<Point>::Ptr tree(new pcl::search::KdTree<Point>);
 	tree->setInputCloud(cloudInput);
 
@@ -579,6 +599,8 @@ std::vector<Cloud::Ptr> euclidianClustering(Cloud::Ptr cloudInput, float cluster
 	tool.setSearchMethod(tree);
 	tool.setInputCloud(cloudInput);
 	tool.extract(clusterIndices);
+
+	std::vector<Cloud::Ptr> listCloudOutput;
 
 	unsigned i = 0;
 	for (std::vector<pcl::PointIndices>::const_iterator it = clusterIndices.begin (); it != clusterIndices.end (); ++it)
@@ -597,6 +619,45 @@ std::vector<Cloud::Ptr> euclidianClustering(Cloud::Ptr cloudInput, float cluster
 
 	return listCloudOutput;
 }
+
+std::vector<Cloud::Ptr> regionGrowing(Cloud::Ptr cloudInput, pcl::PointCloud <pcl::Normal>::Ptr cloudNormal, int numberOfNeighbours, int minClusterSize, int maxClusterSize)
+{
+	pcl::search::KdTree<Point>::Ptr tree(new pcl::search::KdTree<Point>);
+	tree->setInputCloud(cloudInput);
+
+	std::vector <pcl::PointIndices> clusterIndices;
+	pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> tool;
+	tool.setSearchMethod(tree);
+	tool.setNumberOfNeighbours(numberOfNeighbours);
+	tool.setMinClusterSize(minClusterSize);
+	tool.setMaxClusterSize(maxClusterSize);
+	tool.setInputCloud(cloudInput);
+	//tool.setIndices (indices);
+	tool.setInputNormals(cloudNormal);
+	tool.setSmoothnessThreshold(3.0 / 180.0 * M_PI);
+	tool.setCurvatureThreshold(1.0);
+	tool.extract(clusterIndices);
+
+	std::vector<Cloud::Ptr> listCloudOutput;
+
+	unsigned i = 0;
+	for (std::vector<pcl::PointIndices>::const_iterator it = clusterIndices.begin (); it != clusterIndices.end (); ++it)
+	{
+		Cloud::Ptr cloud_cluster (new Cloud);
+
+		for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
+			cloud_cluster->points.push_back(cloudInput->points[*pit]);
+
+		cloud_cluster->width = cloud_cluster->points.size ();
+		cloud_cluster->height = 1;
+		cloud_cluster->is_dense = true;
+
+		listCloudOutput.push_back(cloud_cluster);
+	}
+
+	return listCloudOutput;
+}
+
 
 std::pair<pcl::PointIndices::Ptr, pcl::ModelCoefficients::Ptr> sacSegmentation(Cloud::Ptr cloudInput, int modelType, float threshold)
 {
@@ -637,26 +698,11 @@ Cloud::Ptr filterByIndices(Cloud::Ptr cloudInput, pcl::PointIndices::Ptr indices
 {
 	Cloud::Ptr cloudOutput(new Cloud);
 
-	pcl::ExtractIndices<pcl::PointXYZ> tool;
+	pcl::ExtractIndices<Point> tool;
 	tool.setInputCloud(cloudInput);
 	tool.setIndices(indices);
 	tool.setNegative(negative);
 	tool.filter(*cloudOutput);
-
-	return cloudOutput;
-}
-
-pcl::PointCloud<pcl::Normal>::Ptr estimateNormals(Cloud::Ptr cloudInput, float radius)
-{
-	pcl::PointCloud<pcl::Normal>::Ptr cloudOutput(new pcl::PointCloud<pcl::Normal>);
-
-	pcl::search::KdTree<Point>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
-
-	pcl::NormalEstimation<Point, pcl::Normal> tool;
-	tool.setInputCloud(cloudInput);
-	tool.setSearchMethod(tree);
-	tool.setRadiusSearch(radius);
-	tool.compute(*cloudOutput);
 
 	return cloudOutput;
 }
@@ -866,6 +912,37 @@ int main (int argc, char** argv)
 			pcl::io::savePLYFile(createFilename(outFilename, i), *(listCloudOutput[i]));
 		}
 	}
+
+	
+	else if (toolname == "region-growing")
+	{
+		int numberOfNeighbours = atoi(argv[argn++]);
+		int minClusterSize = atoi(argv[argn++]);
+		int maxClusterSize = atoi(argv[argn++]);
+		const char* inFilename = argv[argn++];
+		const char* normalFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		pcl::PointCloud<pcl::Normal>::Ptr cloudNormal(new pcl::PointCloud<pcl::Normal>);
+
+		cloudNormal = estimateNormals(cloudInput, 0.1);
+		//pcl::io::loadPLYFile(inFilename, *cloudNormal);
+		//std::cerr << "Normal Cloud Size: " << cloudNormal->points.size() << std::endl;
+
+		std::vector<Cloud::Ptr> listCloudOutput = regionGrowing(cloudInput, cloudNormal, numberOfNeighbours, minClusterSize, maxClusterSize);
+
+		for (unsigned i = 0; i < listCloudOutput.size(); ++i)
+		{
+			std::cerr << "Index: " << i << " Output Cloud Size: " << listCloudOutput[i]->points.size() << std::endl;
+			pcl::io::savePLYFile(createFilename(outFilename, i), *(listCloudOutput[i]));
+		}
+	}
+
 	else if (toolname == "sac-segmentation")
 	{
 		int modelType = getModelType(argv[argn++]);
@@ -923,7 +1000,7 @@ int main (int argc, char** argv)
 			Cloud::Ptr cloudOutput = passThrough(cloudInput, fieldName, min, max);
 
 			std::cerr << "Index: " << i << " Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-			pcl::io::savePLYFile(createFilename(outFilename, i), *cloudOutput);
+			savePLYFile(createFilename(outFilename, i), cloudOutput);
 		}
 	}
 
