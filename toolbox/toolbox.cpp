@@ -175,7 +175,99 @@ Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
 	return cloudOutput;
 }
 
-void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
+typedef std::vector<std::pair<unsigned, unsigned> > Edges;
+
+Edges createEdges(unsigned numEdges)
+{
+	Edges edges;
+
+	for (unsigned i = 0; i < numEdges*2; i+=2)
+		edges.push_back(std::pair<unsigned, unsigned>(i, i+1));
+
+	return edges;
+}
+
+Edges createEdgesForBox()
+{
+	Edges edges;
+
+	edges.push_back(std::pair<unsigned, unsigned>(0, 1));
+	edges.push_back(std::pair<unsigned, unsigned>(1, 2));
+	edges.push_back(std::pair<unsigned, unsigned>(4, 5));
+	edges.push_back(std::pair<unsigned, unsigned>(6, 7));
+
+	edges.push_back(std::pair<unsigned, unsigned>(0, 4));
+	edges.push_back(std::pair<unsigned, unsigned>(1, 5));
+	edges.push_back(std::pair<unsigned, unsigned>(2, 6));
+	edges.push_back(std::pair<unsigned, unsigned>(3, 7));
+
+	edges.push_back(std::pair<unsigned, unsigned>(0, 2));
+	edges.push_back(std::pair<unsigned, unsigned>(1, 3));
+	edges.push_back(std::pair<unsigned, unsigned>(4, 6));
+	edges.push_back(std::pair<unsigned, unsigned>(5, 7));
+
+	return edges;
+}
+
+std::vector<std::string> split(std::string s)
+{
+	std::vector<std::string> l;
+
+	std::istringstream iss(s);
+	while (iss)
+	{
+		std::string subs;
+		iss >> subs;
+		l.push_back(subs);
+
+		return l;
+	}
+}
+
+Edges loadPLYEdges(std::string fileName)
+{
+	Edges edges;
+
+	std::ifstream file;
+  	file.open(fileName.c_str());
+
+	unsigned numVertices;
+	unsigned cntVertices;
+	unsigned numEdges;
+	unsigned cntEdges;
+
+	bool readVertices = false;
+	bool readEdges = false;
+
+	std::string line;
+	file >> line;
+	if (line.find("vertices ") != std::string::npos)
+		numVertices = atoi(line.substr(std::string("vertices ").size()).c_str());
+	if (line.find("edges ") != std::string::npos)
+		numEdges = atoi(line.substr(std::string("edges ").size()).c_str());
+	if (line.find("end_header") != std::string::npos)
+		readVertices = true;
+
+	if (readVertices)
+		cntVertices++;
+	if (cntVertices == numVertices)
+	{
+		readVertices = false;
+		readEdges = true;
+	}
+
+	if (readEdges)
+	{
+		unsigned first = atoi(split(line)[0].c_str());
+		unsigned second = atoi(split(line)[1].c_str());
+		edges.push_back(std::pair<unsigned, unsigned>(first, second));
+		cntEdges++;
+	}
+	if (cntEdges == numEdges)
+		readEdges = false;
+}
+
+void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput, Edges edgesInput)
 {
 	std::ofstream file;
   	file.open(fileName.c_str());
@@ -186,7 +278,7 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
 	file << "property float x\n";
 	file << "property float y\n";
 	file << "property float z\n";
-	file << "element edge " << cloudInput->points.size()/2 << "\n";
+	file << "element edge " << edgesInput.size()/2 << "\n";
 	file << "property int vertex1\n";
 	file << "property int vertex2\n";
 	file << "end_header\n";
@@ -202,9 +294,9 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput)
 		file << cloudInput->points[n+1].z << "\n";
 	}
 
-	for (unsigned n = 0; n < cloudInput->points.size(); n+=2)
+	for (unsigned n = 0; n < edgesInput.size(); n+=2)
 	{
-		file << n << " " << n+1 << "\n";
+		file << edgesInput[n].first << " " << edgesInput[n].second << "\n";
 	}
 
 	file.close();
@@ -354,6 +446,19 @@ pcl::PolygonMesh::Ptr makeSurface(Cloud::Ptr cloudInput)
 	return meshOutput;	
 }
 
+
+Cloud::Ptr getBoundingBox(Cloud::Ptr cloudInput)
+{
+	Cloud::Ptr cloudOutput(new Cloud);
+
+	Point min;
+	Point max;
+
+	pcl::getMinMax3D(*cloudInput, min, max);
+
+	return toCloud(createConvexHull(min, max));
+}
+
 #include <algorithm>
 
 bool comparePointOnX(Point p1, Point p2)
@@ -363,7 +468,7 @@ bool comparePointOnY(Point p1, Point p2)
 bool comparePointOnZ(Point p1, Point p2)
 { return p1.z < p2.z; }
 
-Cloud::Ptr getBoundingBox(Cloud::Ptr cloud)
+Cloud::Ptr getMinRectangle(Cloud::Ptr cloud)
 {
 	Cloud proj; 
 	pcl::PCA< Point > pca; 
@@ -391,80 +496,17 @@ Cloud::Ptr getBoundingBox(Cloud::Ptr cloud)
 	return toCloud(pointList);
 }
 
-#if 0
-Cloud::Ptr getBoundingBox(Cloud::Ptr cloud)
-{
-	Eigen::Vector4f pcaCentroid;
-	pcl::compute3DCentroid(*cloud, pcaCentroid);
-	Eigen::Matrix3f covariance;
-	computeCovarianceMatrixNormalized(*cloud, pcaCentroid, covariance);
-	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigenSolver(covariance, Eigen::ComputeEigenvectors);
-	Eigen::Matrix3f eigenVectorsPCA = eigenSolver.eigenvectors();
-	/// This line is necessary for proper orientation in some cases. The numbers come out the same without it, but
-	/// the signs are different and the box doesn't get correctly oriented in some cases.
-	eigenVectorsPCA.col(2) = eigenVectorsPCA.col(0).cross(eigenVectorsPCA.col(1));
 
-	// Transform the original cloud to the origin where the principal components correspond to the axes.
-	Cloud::Ptr cloudProjected(new Cloud);
-
-	Eigen::Matrix4f projectionTransform(Eigen::Matrix4f::Identity());
-	projectionTransform.block<3,3>(0,0) = eigenVectorsPCA.transpose();
-	projectionTransform.block<3,1>(0,3) = -1.f * (projectionTransform.block<3,3>(0,0) * pcaCentroid.head<3>());
-	pcl::transformPointCloud(*cloud, *cloudProjected, projectionTransform);
-	Point minPoint, maxPoint;
-	pcl::getMinMax3D(*cloudProjected, minPoint, maxPoint);
-
-	// rotation and translation
-	const Eigen::Quaternionf bboxQuaternion(eigenVectorsPCA);
-	const Eigen::Vector3f meanDiagonal = 0.5f*(maxPoint.getVector3fMap() + minPoint.getVector3fMap());
-	const Eigen::Vector3f bboxTransform = eigenVectorsPCA * meanDiagonal + pcaCentroid.head<3>();
-
-	vtkSmartPointer<vtkDataSet> cube = pcl::visualization::createCube(bboxTransform, bboxQuaternion, maxPoint.x - minPoint.x, maxPoint.y - minPoint.y, maxPoint.z - minPoint.z);
-
-
-	Cloud::Ptr cloudOutput(new Cloud);
-
-	for (int i = 0; i < cube->GetNumberOfPoints() and i < 8; i+=1)
-		cloudOutput->points.push_back(Point(cube->GetPoint(i)[0], cube->GetPoint(i)[1], cube->GetPoint(i)[2]));
-
-	return cloudOutput;
-}
-#endif
-
-std::vector<float> getMinmax(Cloud::Ptr cloudInput)
-{
-	std::vector<float> vecOutput;
-	vecOutput.push_back(std::numeric_limits<float>::max());
-	vecOutput.push_back(std::numeric_limits<float>::max());
-	vecOutput.push_back(std::numeric_limits<float>::max());
-	vecOutput.push_back(std::numeric_limits<float>::min());
-	vecOutput.push_back(std::numeric_limits<float>::min());
-	vecOutput.push_back(std::numeric_limits<float>::min());
-
-	for (unsigned i = 0; i < cloudInput->points.size(); ++i)
-	{
-		if (cloudInput->points[i].x < vecOutput[0])
-			vecOutput[0] = cloudInput->points[i].x;
-		if (cloudInput->points[i].y < vecOutput[1])
-			vecOutput[1] = cloudInput->points[i].y;
-		if (cloudInput->points[i].z < vecOutput[2])
-			vecOutput[2] = cloudInput->points[i].z;
-
-		if (cloudInput->points[i].x > vecOutput[3])
-			vecOutput[3] = cloudInput->points[i].x;
-		if (cloudInput->points[i].y > vecOutput[4])
-			vecOutput[4] = cloudInput->points[i].y;
-		if (cloudInput->points[i].z > vecOutput[5])
-			vecOutput[5] = cloudInput->points[i].z;
-	}
-
-	return vecOutput;
-}
-
-Cloud::Ptr merge(Cloud::Ptr cloudOutput, Cloud::Ptr cloudInput)
+void merge(Cloud::Ptr cloudOutput, Edges& edgesOutput, Cloud::Ptr cloudInput, Edges& edgesInput)
 {
 	*cloudOutput += *cloudInput;
-	return cloudOutput;
+	unsigned offset = cloudOutput->points.size();
+
+	for (unsigned i = 0; i < edgesInput.size(); ++i)
+	{
+		std::pair<unsigned, unsigned> edge(edgesInput[i].first+offset, edgesInput[i].second+offset);
+		edgesOutput.push_back(edge);
+	}
 }
 
 pcl::PolygonMesh::Ptr merge(pcl::PolygonMesh::Ptr meshOutput, pcl::PolygonMesh::Ptr meshInput)
@@ -475,8 +517,8 @@ pcl::PolygonMesh::Ptr merge(pcl::PolygonMesh::Ptr meshOutput, pcl::PolygonMesh::
 	pcl::fromPCLPointCloud2(meshOutput->cloud, cloudOutput);
 	pcl::fromPCLPointCloud2(meshInput->cloud, cloudInput);
 
-	unsigned offset = cloudOutput.points.size();
 	cloudOutput += cloudInput;
+	unsigned offset = cloudOutput.points.size();
 
 	pcl::toPCLPointCloud2(cloudOutput, meshOutput->cloud);
 
@@ -696,18 +738,23 @@ int main (int argc, char** argv)
 	unsigned argn = 1;
 	std::string toolname = argv[argn++];
 
-	if (toolname == "get-minmax")
+	if (toolname == "get-min-max")
 	{
 		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
 
 		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
 
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		std::vector<float> minmax = getMinmax(cloudInput);
+		Cloud::Ptr cloudOutput = getMinMax(cloudInput);
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
+#if 0
 	else if (toolname == "make-surface")
 	{
 		const char* inFilename = argv[argn++];
@@ -723,9 +770,11 @@ int main (int argc, char** argv)
 		std::cerr << "Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
+#endif
 
 	else if (toolname == "get-bounding-box")
 	{
+		const char* withEdges = argv[argn++];
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
 
@@ -735,6 +784,25 @@ int main (int argc, char** argv)
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
 		Cloud::Ptr cloudOutput = getBoundingBox(cloudInput);
+
+		std::cerr << "Output Cloud: " << outFilename << " Size: " << cloudOutput->points.size() << std::endl;
+		if (std::string(withEdges) == "withEdges")
+			savePLYEdges(outFilename, cloudOutput, createEdgesForBox());
+		else
+			pcl::io::savePLYFile(outFilename, *cloudOutput);
+	}
+
+	else if (toolname == "get-min-rectangle")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		Cloud::Ptr cloudOutput = getMinRectangle(cloudInput);
 
 		std::cerr << "Output Cloud: " << outFilename << " Size: " << cloudOutput->points.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
@@ -790,22 +858,6 @@ int main (int argc, char** argv)
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
 		Cloud::Ptr cloudOutput = statisticalOutlierRemoval(cloudInput, meanK, stddevMulThresh);
-
-		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		pcl::io::savePLYFile(outFilename, *cloudOutput);
-	}
-
-	else if (toolname == "min-max")
-	{
-		const char* inFilename = argv[argn++];
-		const char* outFilename = argv[argn++];
-
-		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
-
-		pcl::io::loadPLYFile(inFilename, *cloudInput);
-		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
-
-		Cloud::Ptr cloudOutput = getMinMax(cloudInput);
 
 		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
@@ -929,24 +981,30 @@ int main (int argc, char** argv)
 
 	else if (toolname == "merge-cloud")
 	{
+		const char* withEdges = argv[argn++];
 		std::vector<std::string> inFilenameList;
 		while (argn < (argc-1))
 			inFilenameList.push_back(argv[argn++]);
 		const char* outFilename = argv[argn++];
 
 		Cloud::Ptr cloudOutput(new Cloud);
+		Edges edgesOutput;
 		for (unsigned i = 0; i < inFilenameList.size(); ++i)
 		{
 			pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
 
 			pcl::io::loadPLYFile(inFilenameList[i], *cloudInput);
 			std::cerr << "Index: " << i << " Input Cloud Size: " << cloudInput->points.size() << std::endl;
+			Edges edgesInput = loadPLYEdges(inFilenameList[i]);
 
-			cloudOutput = merge(cloudOutput, cloudInput);
+			merge(cloudOutput, edgesOutput, cloudInput, edgesInput);
 		}
 
 		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		pcl::io::savePLYFile(outFilename, *cloudOutput);
+		if (std::string(withEdges) == "withEdges")
+			savePLYEdges(outFilename, cloudOutput, edgesOutput);
+		else
+			pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
 	else if (toolname == "merge-mesh")
@@ -1064,11 +1122,11 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		// nothing to do here
 		Cloud::Ptr cloudOutput = cloudInput;
+		Edges edgesOutput = createEdges(cloudInput->points.size()/2);
 
 		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		savePLYEdges(outFilename, cloudOutput);
+		savePLYEdges(outFilename, cloudOutput, edgesOutput);
 	}
 
 	else if (toolname == "create-mesh")
@@ -1094,26 +1152,12 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
-	else if (toolname == "xxx")
+	else if (toolname == "align-box")
 	{
 		float radian = atof(argv[argn++]);
 		const char* refFilename = argv[argn++];
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
-
-#if 0
-		std::vector<Point> boxRef = createConvexHull(Point(0,0,0), Point(1,3,10));
-		std::vector<Point> boxIn = createConvexHull(Point(5,1,0), Point(6,2,5));
-
-		Cloud::Ptr cloudIn(new Cloud);
-		Cloud::Ptr cloudTransf(new Cloud);
-		cloudIn = toCloud(boxIn);
-		//Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
-		Eigen::Affine3f transform = Eigen::Affine3f::Identity();
-		transform.rotate(Eigen::AngleAxisf(radian, Eigen::Vector3f::UnitY()));
-		pcl::transformPointCloud(*cloudIn, *cloudTransf, transform);
-		boxIn = fromCloud(cloudTransf);
-#endif
 
 		pcl::PointCloud<Point>::Ptr cloudRef(new Cloud);
 

@@ -6,7 +6,6 @@ DATA_FILE=../data/balken001/balken001.ply
 SLICE_BASE_PATTERN="slice_"
 CLUSTER_BASE_PATTERN="cluster_"
 BBOX_BASE_PATTERN="bbox_"
-SURFACE_BASE_PATTERN="surf_"
 NUM_SLICES=12
 
 if [[ $1 == *"1"* ]] ; then
@@ -24,18 +23,11 @@ fi
 if [[ $1 == *"3"* ]] ; then
 	for CLUSTER_FILE in $(find $WORK_DIR -name "*_$CLUSTER_BASE_PATTERN*" -printf "%f ") ; do
 		BBOX_FILE=${CLUSTER_FILE/$CLUSTER_BASE_PATTERN/$BBOX_BASE_PATTERN}
-		$TOOLBOX get-bounding-box $WORK_DIR/$CLUSTER_FILE $WORK_DIR/$BBOX_FILE
+		$TOOLBOX get-bounding-box withEdges $WORK_DIR/$CLUSTER_FILE $WORK_DIR/$BBOX_FILE
 	done
 fi
 
 if [[ $1 == *"4"* ]] ; then
-	for BBOX_FILE in $(find $WORK_DIR -name "*_$BBOX_BASE_PATTERN*" -printf "%f ") ; do
-		SURFACE_FILE=${BBOX_FILE/$BBOX_BASE_PATTERN/$SURFACE_BASE_PATTERN}
-		$TOOLBOX make-surface $WORK_DIR/$BBOX_FILE $WORK_DIR/$SURFACE_FILE
-	done
-fi
-
-if [[ $1 == *"5"* ]] ; then
-	SURFACE_FILES=$(find $WORK_DIR -name "*_$SURFACE_BASE_PATTERN*.ply")
-	$TOOLBOX merge-mesh $SURFACE_FILES $WORK_DIR/result.ply
+	BBOX_FILES=$(find $WORK_DIR -name "*_$BBOX_BASE_PATTERN*.ply")
+	$TOOLBOX merge-cloud $BBOX_FILES $WORK_DIR/result.ply
 fi
