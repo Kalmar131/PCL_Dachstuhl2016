@@ -192,7 +192,7 @@ Edges createEdgesForBox()
 	Edges edges;
 
 	edges.push_back(std::pair<unsigned, unsigned>(0, 1));
-	edges.push_back(std::pair<unsigned, unsigned>(1, 2));
+	edges.push_back(std::pair<unsigned, unsigned>(2, 3));
 	edges.push_back(std::pair<unsigned, unsigned>(4, 5));
 	edges.push_back(std::pair<unsigned, unsigned>(6, 7));
 
@@ -219,9 +219,9 @@ std::vector<std::string> split(std::string s)
 		std::string subs;
 		iss >> subs;
 		l.push_back(subs);
-
-		return l;
 	}
+
+	return l;
 }
 
 Edges loadPLYEdges(std::string fileName)
@@ -229,42 +229,49 @@ Edges loadPLYEdges(std::string fileName)
 	Edges edges;
 
 	std::ifstream file;
-  	file.open(fileName.c_str());
+  file.open(fileName.c_str());
 
-	unsigned numVertices;
-	unsigned cntVertices;
-	unsigned numEdges;
-	unsigned cntEdges;
+	unsigned numVertices = 0;
+	unsigned cntVertices = 0;
+	unsigned numEdges = 0;
+	unsigned cntEdges = 0;
 
 	bool readVertices = false;
 	bool readEdges = false;
 
 	std::string line;
-	file >> line;
-	if (line.find("vertices ") != std::string::npos)
-		numVertices = atoi(line.substr(std::string("vertices ").size()).c_str());
-	if (line.find("edges ") != std::string::npos)
-		numEdges = atoi(line.substr(std::string("edges ").size()).c_str());
-	if (line.find("end_header") != std::string::npos)
-		readVertices = true;
-
-	if (readVertices)
-		cntVertices++;
-	if (cntVertices == numVertices)
+	while (std::getline(file, line))
 	{
-		readVertices = false;
-		readEdges = true;
+					if (line.find("vertex ") != std::string::npos)
+									numVertices = atoi(line.find("vertex ") + line.substr(std::string("vertex ").size()).c_str());
+					else if (line.find("edge ") != std::string::npos)
+									numEdges = atoi(line.substr(line.find("edge ") + std::string("edge ").size()).c_str());
+					else if (line.find("end_header") != std::string::npos)
+									readVertices = true;
+
+					else if (readVertices)
+					{
+									cntVertices++;
+									if (cntVertices == numVertices)
+									{
+													readVertices = false;
+													readEdges = true;
+									}
+					}
+
+					else if (readEdges)
+					{
+									std::vector<std::string> list = split(line);
+									unsigned first = atoi(list[0].c_str());
+									unsigned second = atoi(list[1].c_str());
+									edges.push_back(std::pair<unsigned, unsigned>(first, second));
+									cntEdges++;
+									if (cntEdges == numEdges)
+													readEdges = false;
+					}
 	}
 
-	if (readEdges)
-	{
-		unsigned first = atoi(split(line)[0].c_str());
-		unsigned second = atoi(split(line)[1].c_str());
-		edges.push_back(std::pair<unsigned, unsigned>(first, second));
-		cntEdges++;
-	}
-	if (cntEdges == numEdges)
-		readEdges = false;
+	return edges;
 }
 
 void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput, Edges edgesInput)
@@ -278,23 +285,19 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput, Edges edgesInput)
 	file << "property float x\n";
 	file << "property float y\n";
 	file << "property float z\n";
-	file << "element edge " << edgesInput.size()/2 << "\n";
+	file << "element edge " << edgesInput.size() << "\n";
 	file << "property int vertex1\n";
 	file << "property int vertex2\n";
 	file << "end_header\n";
 
-	for (unsigned n = 0; n < cloudInput->points.size(); n+=2)
+	for (unsigned n = 0; n < cloudInput->points.size(); ++n)
 	{
 		file << cloudInput->points[n].x << " ";
 		file << cloudInput->points[n].y << " ";
 		file << cloudInput->points[n].z << "\n";
-
-		file << cloudInput->points[n+1].x << " ";
-		file << cloudInput->points[n+1].y << " ";
-		file << cloudInput->points[n+1].z << "\n";
 	}
 
-	for (unsigned n = 0; n < edgesInput.size(); n+=2)
+	for (unsigned n = 0; n < edgesInput.size(); ++n)
 	{
 		file << edgesInput[n].first << " " << edgesInput[n].second << "\n";
 	}
@@ -499,14 +502,17 @@ Cloud::Ptr getMinRectangle(Cloud::Ptr cloud)
 
 void merge(Cloud::Ptr cloudOutput, Edges& edgesOutput, Cloud::Ptr cloudInput, Edges& edgesInput)
 {
-	*cloudOutput += *cloudInput;
 	unsigned offset = cloudOutput->points.size();
+	*cloudOutput += *cloudInput;
 
+	std::cout << "O:" << edgesOutput.size() << std::endl;
+	std::cout << "I:" << edgesInput.size() << std::endl;
 	for (unsigned i = 0; i < edgesInput.size(); ++i)
 	{
 		std::pair<unsigned, unsigned> edge(edgesInput[i].first+offset, edgesInput[i].second+offset);
 		edgesOutput.push_back(edge);
 	}
+	std::cout << "O:" << edgesOutput.size() << std::endl;
 }
 
 pcl::PolygonMesh::Ptr merge(pcl::PolygonMesh::Ptr meshOutput, pcl::PolygonMesh::Ptr meshInput)

@@ -6,7 +6,7 @@ DATA_FILE=../data/balken001/balken001.ply
 SLICE_BASE_PATTERN="slice_"
 CLUSTER_BASE_PATTERN="cluster_"
 BBOX_BASE_PATTERN="bbox_"
-NUM_SLICES=12
+NUM_SLICES=32
 
 if [[ $1 == *"1"* ]] ; then
 	SLICE_PATTERN=$SLICE_BASE_PATTERN
@@ -29,5 +29,5 @@ fi
 
 if [[ $1 == *"4"* ]] ; then
 	BBOX_FILES=$(find $WORK_DIR -name "*_$BBOX_BASE_PATTERN*.ply")
-	$TOOLBOX merge-cloud $BBOX_FILES $WORK_DIR/result.ply
+	$TOOLBOX merge-cloud withEdges $BBOX_FILES $WORK_DIR/result.ply
 fi
