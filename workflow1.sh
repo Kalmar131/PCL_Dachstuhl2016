@@ -49,7 +49,7 @@ fi
 if [[ $1 == *"6"* ]] ; then
 	for LINE_FILE in $(find $WORK_DIR -name "*_$LINE_BASE_PATTERN*.ply" -printf "%f ") ; do
 		MINMAX_FILE=${LINE_FILE/$LINE_BASE_PATTERN/$MINMAX_BASE_PATTERN}
-		$TOOLBOX min-max $WORK_DIR/$LINE_FILE $WORK_DIR/$MINMAX_FILE
+		$TOOLBOX get-max-distance $WORK_DIR/$LINE_FILE $WORK_DIR/$MINMAX_FILE
 	done
 fi
 
