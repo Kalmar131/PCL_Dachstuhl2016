@@ -749,6 +749,30 @@ Cloud::Ptr filterByIndices(Cloud::Ptr cloudInput, pcl::PointIndices::Ptr indices
 	return cloudOutput;
 }
 
+Cloud::Ptr filterByDirection(Cloud::Ptr cloudInput, Eigen::Vector3f direction, float threshold)
+{
+	Cloud::Ptr cloudOutput(new Cloud);
+
+	for (unsigned i = 0; i < cloudInput->points.size(); i+=2)
+	{
+		Eigen::Vector3f p1 = toVec(cloudInput->points[i]);
+		Eigen::Vector3f p2 = toVec(cloudInput->points[i+1]);
+		
+		Eigen::Vector3f v = p1-p2;
+		Eigen::Vector3f d = v/::sqrt(v.dot(v)) - direction;
+		//std::cout << "d:" << d << "\n";
+
+		
+		if (d.dot(d) < threshold)
+		{
+			cloudOutput->points.push_back(cloudInput->points[i]);
+			cloudOutput->points.push_back(cloudInput->points[i+1]);
+		}
+	}
+
+	return cloudOutput;
+}
+
 int getModelType(std::string modelName)
 {
 	int modelType;
@@ -993,6 +1017,27 @@ int main (int argc, char** argv)
 			std::cerr << "Index: " << i << " Output Cloud Size: " << listCloudOutput[i]->points.size() << std::endl;
 			pcl::io::savePLYFile(createFilename(outFilename, i), *(listCloudOutput[i]));
 		}
+	}
+
+	else if (toolname == "filter-by-direction")
+	{
+		Eigen::Vector3f direction;
+		direction(0) = atof(argv[argn++]);
+		direction(1) = atof(argv[argn++]);
+		direction(2) = atof(argv[argn++]);
+		float threshold = atof(argv[argn++]);
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		Cloud::Ptr cloudOutput = filterByDirection(cloudInput, direction, threshold);
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
 	else if (toolname == "sac-segmentation")
@@ -1253,8 +1298,8 @@ int main (int argc, char** argv)
 
 		pcl::PolygonMesh::Ptr meshOutput = makeSurface(toCloud(boxOut)); 
 
-    std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
-    pcl::io::savePLYFile(outFilename, *meshOutput);
+		std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
 	else
