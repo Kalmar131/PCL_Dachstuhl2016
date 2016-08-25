@@ -1407,6 +1407,44 @@ int main (int argc, char** argv)
 				}
 			}
 		}
+ 
+		std::vector<std::vector<unsigned> > bars;
+		for (unsigned i = 0; i < network.size(); ++i)
+		{
+			for (unsigned j = 0; j < bars.size(); ++j)
+			{
+				if (network[i].first == bars[j][bars[j].size()-1])
+				{
+
+					bars[j].push_back(network[i].second);
+					break;
+				}
+			}
+
+			std::vector<unsigned> bar;
+			bar.push_back(network[i].first);
+			bar.push_back(network[i].second);
+			bars.push_back(bar);
+		}
+
+		std::vector<std::vector<unsigned> > bars_filtered;
+		for (unsigned b = 0; b < bars.size(); ++b)
+		{
+			if (bars[b].size() < 4)
+				continue;
+
+			bars_filtered.push_back(bars[b]);
+		}
+		
+		for (unsigned b = 0; b < bars_filtered.size(); ++b)
+		{
+			std::cerr << "bar:" <<  b << ":";
+			for (unsigned s = 0; s < bars_filtered[b].size(); ++s)
+			{
+				std::cerr << " " << bars_filtered[b][s];
+			}
+			std::cerr << std::endl;
+		}
 	}
 
 	else

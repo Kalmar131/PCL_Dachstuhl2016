@@ -1,8 +1,9 @@
 #!/bin/bash
 
-#./toolbox radius-outlier-removal 0.8 8 ~/Desktop/Studium/Belege/Objekterkennung/balken001/balken001.ply out.ply
-#./toolbox statistical-outlier-removal 20 0.9 ~/Desktop/Studium/Belege/Objekterkennung/cluster_0.ply out.ply
-#./toolbox moving-least-squares 0.02 ~/Desktop/Studium/Belege/Objekterkennung/balken001/balken001.ply out.ply
+#./toolbox/toolbox radius-outlier-removal 0.8 8 ../data/workflow1/balken001.ply out.ply
+#./toolbox/toolbox statistical-outlier-removal 20 0.9 ../data/workflow1/balken001.ply out.ply
+#./toolbox/toolbox moving-least-squares 0.02 ../data/workflow1/balken001.ply out.ply
+#./toolbox/toolbox extract-bars z -1 3 32 0.02 50 100000 0.1 ../data/workflow1/balken001.ply
 
 TOOLBOX=./toolbox/toolbox
 WORK_DIR=../data/workflow1/
