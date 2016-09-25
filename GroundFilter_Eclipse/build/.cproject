@@ -312,14 +312,14 @@
 </target>
 <target name="Build" path="[Targets]/[exe] ground_filter" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
 <buildCommand>/usr/bin/make</buildCommand>
-<buildArguments>-C "/media/loren/0d8c378c-9010-4ed7-ae2e-bac1f7c4df08/Entwicklung/C++/Projekt PCL/Terrain/build" -j4</buildArguments>
+<buildArguments>-C "/media/loren/0d8c378c-9010-4ed7-ae2e-bac1f7c4df08/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/GroundFilter_Eclipse/build" -j4</buildArguments>
 <buildTarget>ground_filter</buildTarget>
 <stopOnError>true</stopOnError>
 <useDefaultCommand>false</useDefaultCommand>
 </target>
 <target name="Clean" path="[Targets]/[exe] ground_filter" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
 <buildCommand>/usr/bin/cmake</buildCommand>
-<buildArguments>-E chdir "/media/loren/0d8c378c-9010-4ed7-ae2e-bac1f7c4df08/Entwicklung/C++/Projekt PCL/Terrain/build" "/usr/bin/cmake" -P "CMakeFiles/ground_filter.dir/cmake_clean.cmake"</buildArguments>
+<buildArguments>-E chdir "/media/loren/0d8c378c-9010-4ed7-ae2e-bac1f7c4df08/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/GroundFilter_Eclipse/build" "/usr/bin/cmake" -P "CMakeFiles/ground_filter.dir/cmake_clean.cmake"</buildArguments>
 <buildTarget></buildTarget>
 <stopOnError>true</stopOnError>
 <useDefaultCommand>false</useDefaultCommand>
