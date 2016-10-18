@@ -23,11 +23,34 @@
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/segmentation/region_growing.h>
 #include <pcl/surface/concave_hull.h>
+#include <pcl/surface/convex_hull.h>
 #include <pcl/surface/mls.h>
 #include <pcl/visualization/pcl_visualizer.h>
 
 typedef pcl::PointXYZ Point;
 typedef pcl::PointCloud<Point> Cloud;
+
+	struct Cluster
+	{
+		unsigned id;
+		unsigned sliceId;
+		Cloud::Ptr cloud;
+		Cloud::Ptr minmax;
+
+		float volume()
+		{
+			return (minmax->points[1].x-minmax->points[0].x)*(minmax->points[1].y-minmax->points[0].y)*(minmax->points[1].z-minmax->points[0].z);
+		}
+
+		bool overlapsWith(const Cluster& o)
+		{
+			return ((minmax->points[0].x > o.minmax->points[0].x and minmax->points[0].x < o.minmax->points[1].x) or
+					 (minmax->points[1].x > o.minmax->points[0].x and minmax->points[1].x < o.minmax->points[1].x)) and
+				((minmax->points[0].y > o.minmax->points[0].y and minmax->points[0].y < o.minmax->points[1].y) or
+					 (minmax->points[1].y > o.minmax->points[0].y and minmax->points[1].y < o.minmax->points[1].y));
+
+		}
+	};
 
 Cloud::Ptr toCloud(std::vector<Point> pointList)
 {
@@ -590,7 +613,18 @@ Cloud::Ptr concaveHull(Cloud::Ptr cloudInput, float alpha)
 
 	pcl::ConcaveHull<pcl::PointXYZ> tool;
 	tool.setInputCloud(cloudInput);
-	tool.setAlpha(0.1);
+	tool.setAlpha(alpha);
+	tool.reconstruct(*cloudOutput);
+
+	return cloudOutput;
+}
+
+Cloud::Ptr convexHull(Cloud::Ptr cloudInput)
+{
+	Cloud::Ptr cloudOutput(new Cloud);
+
+	pcl::ConvexHull<pcl::PointXYZ> tool;
+	tool.setInputCloud(cloudInput);
 	tool.reconstruct(*cloudOutput);
 
 	return cloudOutput;
@@ -950,6 +984,22 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
+	else if (toolname == "convex-hull")
+	{
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		Cloud::Ptr cloudOutput = convexHull(cloudInput);
+
+		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
+		pcl::io::savePLYFile(outFilename, *cloudOutput);
+	}
+
 	else if (toolname == "moving-least-squares")
 	{
 		float searchRadius = atof(argv[argn++]);
@@ -1300,6 +1350,101 @@ int main (int argc, char** argv)
 
 		std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
+	}
+
+	else if (toolname == "extract-bars")
+	{
+		const char* fieldName = argv[argn++];
+		float start = atof(argv[argn++]);
+		float end = atof(argv[argn++]);
+		int numSlices = atoi(argv[argn++]);
+		float clusterTolerance = atof(argv[argn++]);
+		int minClusterSize = atoi(argv[argn++]);
+		int maxClusterSize = atoi(argv[argn++]);
+		float thresholdVolume = atof(argv[argn++]);
+		const char* inFilename = argv[argn++];
+
+		std::vector<Cluster> clusters;
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		unsigned Id = 0;
+		for (unsigned i = 0; i < numSlices; ++i)
+		{
+			float min = start + (end-start)/numSlices * (i+0);
+			float max = start + (end-start)/numSlices * (i+1);
+			Cloud::Ptr slice = passThrough(cloudInput, fieldName, min, max);
+
+			std::vector<Cloud::Ptr> listCluster = euclidianClustering(slice, clusterTolerance, minClusterSize, maxClusterSize);
+
+			for (unsigned c = 0; c < listCluster.size(); ++c)
+			{
+				Cluster cluster;
+				cluster.id = Id++;
+				cluster.sliceId = i;
+				cluster.cloud = listCluster[c];
+				cluster.minmax = getMinMax(listCluster[c]);
+				clusters.push_back(cluster);
+			}
+		}
+
+		std::vector<std::pair<unsigned, unsigned> > network;
+		for (unsigned base = 0; base < clusters.size(); ++base)
+		{
+			for (unsigned ref = base+1; ref < clusters.size(); ++ref)
+			{
+				if (clusters[base].sliceId != clusters[ref].sliceId-1)
+					continue;
+
+				if (clusters[base].volume() - clusters[ref].volume() < thresholdVolume and
+					clusters[base].overlapsWith(clusters[ref]))
+				{
+					std::cerr << "add connection: " << clusters[base].id << " " << clusters[ref].id << std::endl;
+					network.push_back(std::pair<unsigned, unsigned>(clusters[base].id, clusters[ref].id));
+				}
+			}
+		}
+ 
+		std::vector<std::vector<unsigned> > bars;
+		for (unsigned i = 0; i < network.size(); ++i)
+		{
+			for (unsigned j = 0; j < bars.size(); ++j)
+			{
+				if (network[i].first == bars[j][bars[j].size()-1])
+				{
+
+					bars[j].push_back(network[i].second);
+					break;
+				}
+			}
+
+			std::vector<unsigned> bar;
+			bar.push_back(network[i].first);
+			bar.push_back(network[i].second);
+			bars.push_back(bar);
+		}
+
+		std::vector<std::vector<unsigned> > bars_filtered;
+		for (unsigned b = 0; b < bars.size(); ++b)
+		{
+			if (bars[b].size() < 4)
+				continue;
+
+			bars_filtered.push_back(bars[b]);
+		}
+		
+		for (unsigned b = 0; b < bars_filtered.size(); ++b)
+		{
+			std::cerr << "bar:" <<  b << ":";
+			for (unsigned s = 0; s < bars_filtered[b].size(); ++s)
+			{
+				std::cerr << " " << bars_filtered[b][s];
+			}
+			std::cerr << std::endl;
+		}
 	}
 
 	else
