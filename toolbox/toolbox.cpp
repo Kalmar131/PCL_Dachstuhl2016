@@ -1,3 +1,5 @@
+#include <cfloat>
+#include <cmath>
 #include <iostream>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PolygonMesh.h>
@@ -44,10 +46,14 @@ typedef pcl::PointCloud<Point> Cloud;
 
 		bool overlapsWith(const Cluster& o)
 		{
-			return ((minmax->points[0].x > o.minmax->points[0].x and minmax->points[0].x < o.minmax->points[1].x) or
-					 (minmax->points[1].x > o.minmax->points[0].x and minmax->points[1].x < o.minmax->points[1].x)) and
-				((minmax->points[0].y > o.minmax->points[0].y and minmax->points[0].y < o.minmax->points[1].y) or
-					 (minmax->points[1].y > o.minmax->points[0].y and minmax->points[1].y < o.minmax->points[1].y));
+			return ((minmax->points[0].x >= o.minmax->points[0].x and minmax->points[0].x <= o.minmax->points[1].x) or
+					 (minmax->points[1].x >= o.minmax->points[0].x and minmax->points[1].x <= o.minmax->points[1].x) or
+					 (minmax->points[0].x >= o.minmax->points[0].x and minmax->points[1].x <= o.minmax->points[1].x) or
+					 (minmax->points[0].x <= o.minmax->points[0].x and minmax->points[1].x >= o.minmax->points[1].x)) and
+				((minmax->points[0].y >= o.minmax->points[0].y and minmax->points[0].y <= o.minmax->points[1].y) or
+					 (minmax->points[1].y >= o.minmax->points[0].y and minmax->points[1].y <= o.minmax->points[1].y) or
+					 (minmax->points[0].y >= o.minmax->points[0].y and minmax->points[1].y <= o.minmax->points[1].y) or
+					 (minmax->points[0].y <= o.minmax->points[0].y and minmax->points[1].y >= o.minmax->points[1].y));
 
 		}
 	};
@@ -88,6 +94,11 @@ Point fromVec(Eigen::Vector3f in)
 	return Point(in(0), in(1), in(2));
 }
 
+Point fromVec(Eigen::Vector4f in)
+{
+	return Point(in(0), in(1), in(2));
+}
+
 
 std::vector<Eigen::Vector3f> toVec(std::vector<Point> in)
 {
@@ -108,6 +119,114 @@ std::vector<Point> fromVec(std::vector<Eigen::Vector3f> in)
 
 	return out;
 }
+
+//----------------------------------------------------------------
+// geometry helper
+
+float sqr(Eigen::Vector3f v)
+{
+	return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+}
+
+float length(Eigen::Vector3f v)
+{
+  return ::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+
+struct Line
+{
+	Line()
+	: p(), d()
+	{}
+
+	Line(Point p1, Point p2)
+	{
+		p = toVec(p1);
+		d = Eigen::Vector3f(toVec(p2) - toVec(p1));
+	}
+
+	Line(Eigen::Vector3f p0, Eigen::Vector3f p1)
+	{
+		p = p0;
+		d = p1-p0;
+	}
+
+	Eigen::Vector3f p;
+	Eigen::Vector3f d;
+};
+
+
+struct Plane
+{
+	Plane()
+	: p(), n(), d(0)
+	{}
+
+	Plane(Point p1, Point p2, Point p3)
+	{
+		p = toVec(p1);
+		n = (toVec(p2) - toVec(p1)).cross(toVec(p3) - toVec(p1));
+		n = n/length(n);
+		if (toVec(p1).dot(n) < 0)
+			n = -n;
+		d = n.dot(toVec(p1));
+	}
+
+	Line cut(Plane plane)
+	{
+		Line line;
+
+		float b = sqr(n)*sqr(plane.n)-n.dot(plane.n)*n.dot(plane.n);
+		line.p = ((d*sqr(plane.n) - plane.d*(n.dot(plane.n)))*n)/b + ((plane.d*sqr(n) - d*(n.dot(plane.n)))*plane.n)/b;
+		line.d = n.cross(plane.n);
+
+		return line;
+	}
+
+	Point cut(Line line)
+	{
+		float x = (-((line.p - p).dot(n))/line.d.dot(n));
+		return fromVec(Eigen::Vector3f(line.d * x + line.p));
+	}
+
+	Eigen::Vector3f p;
+	Eigen::Vector3f n;
+	float d;
+};
+
+float distPointToLine(Point point, Line line)
+{
+	return length((toVec(point) - line.p).cross(line.d)) / length(line.d);
+}
+
+float distPointToPlane(Point point, Plane plane)
+{
+//	return (toVec(point) - plane.p).dot(plane.n) / length(plane.n);
+	return toVec(point).dot(plane.n) - plane.d;
+}
+
+float getMinDistToRect(Point point, std::vector<Eigen::Vector3f> rect)
+{
+  float minDist = FLT_MAX;
+
+  std::vector<Line> l;
+  l.push_back(Line(rect[0], rect[1]));
+  l.push_back(Line(rect[1], rect[2]));
+  l.push_back(Line(rect[2], rect[3]));
+  l.push_back(Line(rect[3], rect[0]));
+
+  for (unsigned i = 0; i < l.size(); ++i)
+	{
+    float d = distPointToLine(point, l[i]);
+    if (d < minDist)
+      minDist = d;
+	}
+
+  return minDist;
+}
+
+//----------------------------------------------------------------
 
 pcl::PolygonMesh::Ptr extractFaces(Cloud::Ptr cloudInput)
 {
@@ -211,24 +330,24 @@ Edges createEdges(unsigned numEdges)
 	return edges;
 }
 
-Edges createEdgesForBox()
+Edges createEdgesForBox(unsigned base = 0)
 {
 	Edges edges;
 
-	edges.push_back(std::pair<unsigned, unsigned>(0, 1));
-	edges.push_back(std::pair<unsigned, unsigned>(2, 3));
-	edges.push_back(std::pair<unsigned, unsigned>(4, 5));
-	edges.push_back(std::pair<unsigned, unsigned>(6, 7));
+	edges.push_back(std::pair<unsigned, unsigned>(base+0, base+1));
+	edges.push_back(std::pair<unsigned, unsigned>(base+2, base+3));
+	edges.push_back(std::pair<unsigned, unsigned>(base+4, base+5));
+	edges.push_back(std::pair<unsigned, unsigned>(base+6, base+7));
 
-	edges.push_back(std::pair<unsigned, unsigned>(0, 4));
-	edges.push_back(std::pair<unsigned, unsigned>(1, 5));
-	edges.push_back(std::pair<unsigned, unsigned>(2, 6));
-	edges.push_back(std::pair<unsigned, unsigned>(3, 7));
+	edges.push_back(std::pair<unsigned, unsigned>(base+0, base+4));
+	edges.push_back(std::pair<unsigned, unsigned>(base+1, base+5));
+	edges.push_back(std::pair<unsigned, unsigned>(base+2, base+6));
+	edges.push_back(std::pair<unsigned, unsigned>(base+3, base+7));
 
-	edges.push_back(std::pair<unsigned, unsigned>(0, 2));
-	edges.push_back(std::pair<unsigned, unsigned>(1, 3));
-	edges.push_back(std::pair<unsigned, unsigned>(4, 6));
-	edges.push_back(std::pair<unsigned, unsigned>(5, 7));
+	edges.push_back(std::pair<unsigned, unsigned>(base+0, base+2));
+	edges.push_back(std::pair<unsigned, unsigned>(base+1, base+3));
+	edges.push_back(std::pair<unsigned, unsigned>(base+4, base+6));
+	edges.push_back(std::pair<unsigned, unsigned>(base+5, base+7));
 
 	return edges;
 }
@@ -342,31 +461,7 @@ pcl::Vertices createPolygon(unsigned i0, unsigned i1, unsigned i2, unsigned i3)
 	return polygon;
 }
 
-std::vector<Point> getPlane(Point p1, Point p2, Point p3)
-{
-	std::vector<Point> out;
 
-	out.push_back(p1);
-	out.push_back(fromVec((toVec(p2) - toVec(p1)).cross(toVec(p3) - toVec(p1))));
-
-	return out;
-}
-
-std::vector<Point> getLine(Point p1, Point p2)
-{
-	std::vector<Point> out;
-
-	out.push_back(p1);
-	out.push_back(fromVec(toVec(p2) - toVec(p1)));
-
-	return out;
-}
-
-Eigen::Vector3f cutWithPlane(std::vector<Eigen::Vector3f> line, std::vector<Eigen::Vector3f> plane)
-{
-	float x = (-((line[0] - plane[0]).dot(plane[1]))/(line[1]).dot(plane[1]));
-	return line[1] * x + line[0];
-}
 
 std::vector< std::vector<Point> > getFaces(std::vector<Point> box)
 {
@@ -416,10 +511,10 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 	boxOut[1] = boxTgt[1];
 	boxOut[2] = boxTgt[2];
 	boxOut[3] = boxTgt[3];
-	boxOut[4] = fromVec(cutWithPlane(toVec(getLine(boxTgt[0], boxTgt[4])), toVec(getPlane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]))));
-	boxOut[5] = fromVec(cutWithPlane(toVec(getLine(boxTgt[1], boxTgt[5])), toVec(getPlane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]))));
-	boxOut[6] = fromVec(cutWithPlane(toVec(getLine(boxTgt[2], boxTgt[6])), toVec(getPlane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]))));
-	boxOut[7] = fromVec(cutWithPlane(toVec(getLine(boxTgt[3], boxTgt[7])), toVec(getPlane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]))));
+	boxOut[4] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[0], boxTgt[4]));
+	boxOut[5] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[1], boxTgt[5]));
+	boxOut[6] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[2], boxTgt[6]));
+	boxOut[7] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[3], boxTgt[7]));
 
 	return boxOut;
 }
@@ -512,6 +607,11 @@ Cloud::Ptr getMinRectangle(Cloud::Ptr cloud)
 	for (unsigned i = 0; i < projPointList.size(); ++i) 
 		pca.reconstruct(projPointList[i], pointList[i]); 
 
+	std::cout << pca.getEigenVectors() << std::endl;
+	std::cout << pca.getEigenVectors()(0,0) << " " << pca.getEigenVectors()(0,1) << " " << pca.getEigenVectors()(0,2) << std::endl;
+	std::cout << pca.getEigenVectors()(1,0) << " " << pca.getEigenVectors()(1,1) << " " << pca.getEigenVectors()(1,2) << std::endl;
+	std::cout << pca.getEigenVectors()(2,0) << " " << pca.getEigenVectors()(2,1) << " " << pca.getEigenVectors()(2,2) << std::endl;
+
 	std::sort(pointList.begin()+0, pointList.begin()+8, comparePointOnZ);
 	std::sort(pointList.begin()+0, pointList.begin()+4, comparePointOnY);
 	std::sort(pointList.begin()+4, pointList.begin()+8, comparePointOnY);
@@ -519,6 +619,10 @@ Cloud::Ptr getMinRectangle(Cloud::Ptr cloud)
 	std::sort(pointList.begin()+2, pointList.begin()+4, comparePointOnX);
 	std::sort(pointList.begin()+4, pointList.begin()+6, comparePointOnX);
 	std::sort(pointList.begin()+6, pointList.begin()+8, comparePointOnX);
+	Point mean = fromVec(pca.getMean());
+	pointList.push_back(Point(mean.x + pca.getEigenVectors()(0) * 2, mean.y + pca.getEigenVectors()(1) * 2, mean.z + pca.getEigenVectors()(2) * 2));
+	pointList.push_back(Point(mean.x + pca.getEigenVectors()(3) * 2, mean.y + pca.getEigenVectors()(4) * 2, mean.z + pca.getEigenVectors()(5) * 2));
+	pointList.push_back(Point(mean.x + pca.getEigenVectors()(6) * 2, mean.y + pca.getEigenVectors()(7) * 2, mean.z + pca.getEigenVectors()(8) * 2));
 
 	return toCloud(pointList);
 }
@@ -529,14 +633,11 @@ void merge(Cloud::Ptr cloudOutput, Edges& edgesOutput, Cloud::Ptr cloudInput, Ed
 	unsigned offset = cloudOutput->points.size();
 	*cloudOutput += *cloudInput;
 
-	std::cout << "O:" << edgesOutput.size() << std::endl;
-	std::cout << "I:" << edgesInput.size() << std::endl;
 	for (unsigned i = 0; i < edgesInput.size(); ++i)
 	{
 		std::pair<unsigned, unsigned> edge(edgesInput[i].first+offset, edgesInput[i].second+offset);
 		edgesOutput.push_back(edge);
 	}
-	std::cout << "O:" << edgesOutput.size() << std::endl;
 }
 
 pcl::PolygonMesh::Ptr merge(pcl::PolygonMesh::Ptr meshOutput, pcl::PolygonMesh::Ptr meshInput)
@@ -807,6 +908,308 @@ Cloud::Ptr filterByDirection(Cloud::Ptr cloudInput, Eigen::Vector3f direction, f
 	return cloudOutput;
 }
 
+unsigned cntEqualPoints(Cloud::Ptr cloud1, Cloud::Ptr cloud2)
+{
+	unsigned num = 0;
+
+	for (unsigned i = 0; i < cloud1->points.size(); i++)
+		for (unsigned j = 0; j < cloud2->points.size(); j++)
+			{
+				if ((cloud1->points[i].x == cloud2->points[j].x) and (cloud1->points[i].y == cloud2->points[j].y) and (cloud1->points[i].z == cloud2->points[j].z))
+				{
+					++num;
+					break;
+				}
+			}
+
+	return num;
+} 
+
+Point mean(Cloud::Ptr cloud)
+{
+	Point point;
+
+  for (unsigned i = 0; i < cloud->points.size(); i++)
+	{
+		point.x += cloud->points[i].x;
+		point.y += cloud->points[i].y;
+		point.z += cloud->points[i].z;
+	}
+
+	point.x /= cloud->points.size();
+	point.y /= cloud->points.size();
+	point.z /= cloud->points.size();
+
+	return point;
+}
+
+float minDistance(Cloud::Ptr cloud, Point point)
+{
+	float min = FLT_MAX;
+
+  for (unsigned i = 0; i < cloud->points.size(); i++)
+	{
+		if (distance(cloud->points[i], point) < min)
+			min = distance(cloud->points[i], point);
+	}
+
+	return min;
+}
+
+bool isWithin(Point p, Point min, Point max)
+{
+	return (p.x >= min.x and p.x <= max.x) and (p.y >= min.y and p.y <= max.y);
+}
+
+Point addxy(Point p, Eigen::Vector3f v)
+{
+	return Point(p.x+v(0), p.y+v(1), p.z);
+}
+
+unsigned translate(Point p1, Point p2, Eigen::Vector3f n, float s, Point min, Point max)
+{
+		unsigned k = 1;
+	
+		Point p3 = p1;
+		Point p4 = p2;
+		while (isWithin(p3, min, max) and isWithin(p4, min, max))
+		{
+			p3 = addxy(p1, n*s*k);
+			p4 = addxy(p2, n*s*k);
+			k += 1;
+		}
+
+	return k;
+}
+
+Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist, float threshold, int minNumInliers, int maxNumOutliers, float maxCos)
+{
+		std::vector<Plane> planeList;
+		std::vector<pcl::PointCloud<Point>::Ptr> inliersList;
+		for (unsigned i = 0; i < numIterations and planeList.size() < 2; ++i)
+		{
+			Point p1 = cloudInput->points[rand() % cloudInput->points.size()];
+			Point p2 = cloudInput->points[rand() % cloudInput->points.size()];
+			Point p3 = cloudInput->points[rand() % cloudInput->points.size()];
+			Plane plane(p1, p2, p3);
+			pcl::PointCloud<Point>::Ptr inliers(new Cloud);
+
+			if (distance(p1, p2) < minDist or distance(p1, p3) < minDist or distance(p2, p3) < minDist)	
+			{
+				continue;
+			}
+
+			unsigned numInliersLeft = 0;
+			unsigned numInliersRight = 0;
+			unsigned numOutliersLeft = 0;
+			unsigned numOutliersRight = 0;
+			for (unsigned j = 0; j < cloudInput->points.size(); ++j)
+			{
+				float dist = distPointToPlane(cloudInput->points[j], plane);
+				if (fabs(dist) < threshold)
+				{
+					if (dist < 0)
+						++numInliersLeft;
+					else
+						++numInliersRight;
+					inliers->points.push_back(cloudInput->points[j]);
+				}
+				else
+				{
+					if (dist < 0)
+						++numOutliersLeft;
+					else
+						++numOutliersRight;
+				}
+			}
+
+			if (numInliersLeft + numInliersRight < minNumInliers)
+				continue;
+			if (numOutliersLeft > maxNumOutliers and numOutliersRight > maxNumOutliers)
+				continue;
+			if (minDistance(inliers, mean(inliers)) > 0.01)
+				continue;
+
+			bool do_add = true;
+			for (unsigned j = 0; j < planeList.size(); ++j)
+			{
+				if (planeList[j].n.dot(plane.n) > maxCos)
+				{
+					//printf("similar angle\n");
+
+					if (cntEqualPoints(inliersList[j], inliers) > 0)
+					{
+						//printf("identical\n");
+						do_add = false;
+					}
+					else
+					{
+						//printf("parallel\n");
+						do_add = false;
+					}
+				}
+				else if (planeList[j].n.dot(plane.n) < 0.02)
+				{
+					//printf("right angle\n");
+				}
+				else
+				{
+					//printf("odd angle\n");
+					do_add = false;
+					break;
+				}
+			}
+
+			if (do_add)
+			{
+				planeList.push_back(plane);
+				inliersList.push_back(inliers);
+			}
+
+			//std::cout << plane.n(0) << " " << plane.n(1) << " " << plane.n(2) << " " << plane.d << " : "<< numInliersLeft << " " << numInliersRight << " " << numOutliersLeft << " " << numOutliersRight << std::endl;
+		}
+
+		Cloud::Ptr cloudOutput(new Cloud);
+
+		if (planeList.size() < 2)
+		{
+			printf("extract 2 sides failed\n");
+			return cloudOutput;
+		}
+
+		Point min, max;
+		pcl::getMinMax3D(*cloudInput, min, max);
+		Plane top(min, Point(min.x, max.y, min.z), Point(max.x, min.y, min.z));
+		Plane bot(max, Point(min.x, max.y, max.z), Point(max.x, min.y, max.z));
+
+		Line line = planeList[0].cut(planeList[1]);
+		Point p1 = top.cut(line);
+		Point p2 = bot.cut(line);
+		unsigned kl1 = translate(p1, p2, planeList[0].n, 0.01, min, max);
+		unsigned kr1 = translate(p1, p2, planeList[0].n, -0.01, min, max);
+		Point p3 = addxy(p1, planeList[0].n * (kl1 > kr1 ? 0.01*kl1 : -0.01*kr1));
+		Point p4 = addxy(p2, planeList[0].n * (kl1 > kr1 ? 0.01*kl1 : -0.01*kr1));
+		unsigned kl2 = translate(p1, p2, planeList[1].n, 0.01, min, max);
+		unsigned kr2 = translate(p1, p2, planeList[1].n, -0.01, min, max);
+		Point p5 = addxy(p1, planeList[1].n * (kl2 > kr2 ? 0.01*kl2 : -0.01*kr2));
+		Point p6 = addxy(p2, planeList[1].n * (kl2 > kr2 ? 0.01*kl2 : -0.01*kr2));
+		Point p7 = addxy(p3, planeList[1].n * (kl2 > kr2 ? 0.01*kl2 : -0.01*kr2));
+		Point p8 = addxy(p4, planeList[1].n * (kl2 > kr2 ? 0.01*kl2 : -0.01*kr2));
+		//p7 = addxy(p5, planeList[0].n * (kl1 > kr1 ? 0.01*kl1 : -0.01*kr1));
+		//p8 = addxy(p6, planeList[0].n * (kl1 > kr1 ? 0.01*kl1 : -0.01*kr1));
+
+		//printf("p1:%f %f %f\n", p1.x, p1.y, p1.z);
+		//printf("p2:%f %f %f\n", p2.x, p2.y, p2.z);
+		//printf("p3:%f %f %f\n", p3.x, p3.y, p3.z);
+		//printf("p4:%f %f %f\n", p4.x, p4.y, p4.z);
+		//printf("p7:%f %f %f\n", p7.x, p7.y, p7.z);
+		//printf("p8:%f %f %f\n", p8.x, p8.y, p8.z);
+
+		cloudOutput->points.push_back(p1);
+		cloudOutput->points.push_back(p2);
+		cloudOutput->points.push_back(p3);
+		cloudOutput->points.push_back(p4);
+		cloudOutput->points.push_back(p5);
+		cloudOutput->points.push_back(p6);
+		cloudOutput->points.push_back(p7);
+		cloudOutput->points.push_back(p8);
+
+		printf("extract 2 sides succeeded\n");
+		return cloudOutput;
+}
+
+//----------------------------------------------------------------
+
+std::vector<Eigen::Vector3f> fitRect(Cloud::Ptr cloud, std::vector<Eigen::Vector3f> rect, int maxIt, int maxUnchangedIt, float initVariance)
+{
+	float minDist = FLT_MAX;
+
+	float variance = initVariance;
+	unsigned i = 0;
+	while (i < maxIt)
+	{
+		i += 1;
+
+		unsigned numUnchangedIt = 0;
+		while (numUnchangedIt < maxUnchangedIt)
+		{
+#if 0
+			unsigned ip = rand() % 4;
+			Eigen::Vector3f v = rect[ip];
+			rect[ip][0] += (rand()%2)*variance - variance/2;
+			rect[ip][1] += (rand()%2)*variance - variance/2;
+#endif
+
+			static unsigned ix = 0;
+			if (ix == 0)
+			{
+							rect[0][1] += variance;
+							rect[1][1] += variance;
+			}
+			else if (ix == 1)
+			{
+							rect[1][0] -= variance;
+							rect[2][0] -= variance;
+			}
+			else if (ix == 2)
+			{
+							rect[2][1] -= variance;
+							rect[3][1] -= variance;
+			}
+			else if (ix == 3)
+			{
+							rect[3][0] += variance;
+							rect[0][0] += variance;
+			}
+
+			float d = 0;
+			for (unsigned j = 0; j < cloud->points.size(); ++j)
+				 d += getMinDistToRect(cloud->points[j], rect);
+
+			if (d < minDist)
+			{
+				minDist = d;
+				numUnchangedIt = 0;
+			}
+			else
+			{
+				// undo changes
+			if (ix == 0)
+			{
+							rect[0][1] -= variance;
+							rect[1][1] -= variance;
+			}
+			else if (ix == 1)
+			{
+							rect[1][0] += variance;
+							rect[2][0] += variance;
+			}
+			else if (ix == 2)
+			{
+							rect[2][1] += variance;
+							rect[3][1] += variance;
+			}
+			else if (ix == 3)
+			{
+							rect[3][0] -= variance;
+							rect[0][0] -= variance;
+			}
+				numUnchangedIt += 1;
+			}
+
+			ix = (ix+1) % 4;
+
+			std::cout << "i:" << i << " numUnchangedIt:" << numUnchangedIt << " minDist:" << minDist << "\n";
+		}
+
+		variance = variance/2;
+	}
+
+	return rect;
+}
+
+//----------------------------------------------------------------
+
 int getModelType(std::string modelName)
 {
 	int modelType;
@@ -898,6 +1301,7 @@ int main (int argc, char** argv)
 
 	else if (toolname == "get-min-rectangle")
 	{
+		const char* withEdges = argv[argn++];
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
 
@@ -909,7 +1313,10 @@ int main (int argc, char** argv)
 		Cloud::Ptr cloudOutput = getMinRectangle(cloudInput);
 
 		std::cerr << "Output Cloud: " << outFilename << " Size: " << cloudOutput->points.size() << std::endl;
-		pcl::io::savePLYFile(outFilename, *cloudOutput);
+		if (std::string(withEdges) == "withEdges")
+			savePLYEdges(outFilename, cloudOutput, createEdgesForBox());
+		else
+			pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
 	else if (toolname == "pass-through")
@@ -1362,7 +1769,11 @@ int main (int argc, char** argv)
 		int minClusterSize = atoi(argv[argn++]);
 		int maxClusterSize = atoi(argv[argn++]);
 		float thresholdVolume = atof(argv[argn++]);
+		//int fitRectMaxIt = atoi(argv[argn++]);
+		//int fitRectMaxPasses = atoi(argv[argn++]);
+		//float fitRectInitVariance = atof(argv[argn++]);
 		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
 
 		std::vector<Cluster> clusters;
 
@@ -1371,23 +1782,23 @@ int main (int argc, char** argv)
 		pcl::io::loadPLYFile(inFilename, *cloudInput);
 		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
 
-		unsigned Id = 0;
 		for (unsigned i = 0; i < numSlices; ++i)
 		{
 			float min = start + (end-start)/numSlices * (i+0);
 			float max = start + (end-start)/numSlices * (i+1);
 			Cloud::Ptr slice = passThrough(cloudInput, fieldName, min, max);
+			std::cout << "slice:" << i << std::endl;
 
 			std::vector<Cloud::Ptr> listCluster = euclidianClustering(slice, clusterTolerance, minClusterSize, maxClusterSize);
 
 			for (unsigned c = 0; c < listCluster.size(); ++c)
 			{
 				Cluster cluster;
-				cluster.id = Id++;
 				cluster.sliceId = i;
 				cluster.cloud = listCluster[c];
 				cluster.minmax = getMinMax(listCluster[c]);
 				clusters.push_back(cluster);
+				std::cout << "cluster:" << clusters.size()-1 << " points:" << listCluster[c]->points.size() << std::endl;
 			}
 		}
 
@@ -1396,18 +1807,24 @@ int main (int argc, char** argv)
 		{
 			for (unsigned ref = base+1; ref < clusters.size(); ++ref)
 			{
+				// look only at adjacent slices
 				if (clusters[base].sliceId != clusters[ref].sliceId-1)
 					continue;
 
-				if (clusters[base].volume() - clusters[ref].volume() < thresholdVolume and
+				if (clusters[base].overlapsWith(clusters[ref]))
+					std::cout << "overlaps base:" << base << " ref:" << ref << " vol:" << ::fabs(clusters[base].volume() - clusters[ref].volume()) << std::endl;
+
+				// if the volume is similar then an cluster are connected then there is a connection between the cluster
+				if (::fabs(clusters[base].volume() - clusters[ref].volume()) < thresholdVolume and
 					clusters[base].overlapsWith(clusters[ref]))
 				{
-					std::cerr << "add connection: " << clusters[base].id << " " << clusters[ref].id << std::endl;
-					network.push_back(std::pair<unsigned, unsigned>(clusters[base].id, clusters[ref].id));
+					std::cerr << "add connection: " << base << " " << ref << std::endl;
+					network.push_back(std::pair<unsigned, unsigned>(base, ref));
 				}
 			}
 		}
  
+		// extract bars from network
 		std::vector<std::vector<unsigned> > bars;
 		for (unsigned i = 0; i < network.size(); ++i)
 		{
@@ -1415,27 +1832,31 @@ int main (int argc, char** argv)
 			{
 				if (network[i].first == bars[j][bars[j].size()-1])
 				{
-
+					// add cluster to bar
 					bars[j].push_back(network[i].second);
 					break;
 				}
 			}
 
+			// create new bar
 			std::vector<unsigned> bar;
 			bar.push_back(network[i].first);
 			bar.push_back(network[i].second);
 			bars.push_back(bar);
 		}
 
+		// filter out bars with a minimal number of components
 		std::vector<std::vector<unsigned> > bars_filtered;
 		for (unsigned b = 0; b < bars.size(); ++b)
 		{
-			if (bars[b].size() < 4)
+			if (bars[b].size() < 2)
 				continue;
 
 			bars_filtered.push_back(bars[b]);
 		}
-		
+
+#if 0	
+		// print out filtered bars
 		for (unsigned b = 0; b < bars_filtered.size(); ++b)
 		{
 			std::cerr << "bar:" <<  b << ":";
@@ -1444,6 +1865,81 @@ int main (int argc, char** argv)
 				std::cerr << " " << bars_filtered[b][s];
 			}
 			std::cerr << std::endl;
+		}
+#endif
+
+		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
+		Edges edgesOutput;
+
+		unsigned idxPoint = 0;
+		for (unsigned b = 0; b < bars_filtered.size(); ++b)
+		{
+			for (unsigned s = 0; s < bars_filtered[b].size(); ++s)
+			{
+				Cloud::Ptr cloud = clusters[bars_filtered[b][s]].cloud;
+
+				Point min;
+				Point max;
+				pcl::getMinMax3D(*cloud, min, max);
+				Cloud::Ptr cloudBox = extractSides(cloud, 1000, (max.x-min.x)/3, (max.x-min.x)/20, cloud->points.size()/4, cloud->points.size()/20, 0.98);
+
+				if (cloudBox->points.size())
+				{
+					Edges edgesBox = createEdgesForBox();
+					merge(cloudOutput, edgesOutput, cloudBox, edgesBox);
+				}
+			}
+		}
+
+		std::cerr << "Output Cloud with Edges: " << outFilename << " Size: " << cloudOutput->points.size() << " Edges: " << edgesOutput.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput, edgesOutput);
+	}
+
+	else if (toolname == "extract-sides")
+	{
+		int numIterations = atoi(argv[argn++]);
+		float minDist = atof(argv[argn++]);
+		float threshold = atof(argv[argn++]);
+		int minNumInliers = atoi(argv[argn++]);
+		int maxNumOutliers = atoi(argv[argn++]);
+		float maxCos = atof(argv[argn++]);
+		const char* inFilename = argv[argn++];
+		const char* outFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		Cloud::Ptr cloudOutput = extractSides(cloudInput, numIterations, minDist, threshold, minNumInliers, maxNumOutliers, maxCos);
+
+		savePLYEdges(outFilename, cloudOutput, cloudOutput->points.size() ? createEdgesForBox() : Edges());
+	}
+
+	else if (toolname == "xxx")
+	{
+		float threshold = atof(argv[argn++]);
+		const char* inFilename = argv[argn++];
+
+		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
+
+		pcl::io::loadPLYFile(inFilename, *cloudInput);
+		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
+
+		for (unsigned j1 = 0; j1 < cloudInput->points.size(); ++j1)
+		{
+			for (unsigned j2 = j1+1; j2 < cloudInput->points.size(); ++j2)
+			{
+				for (unsigned j3 = j2+2; j3 < cloudInput->points.size(); ++j3)
+				{
+					Point p1 = cloudInput->points[j1];
+					Point p2 = cloudInput->points[j2];
+					Point p3 = cloudInput->points[j3];
+					if (distance(p1, p2) > threshold and distance(p1, p3) > threshold and distance(p2, p3) > threshold)
+						std::cout << "Y";
+				}
+			}
+			std::cout << "j1:" << j1 << std::endl;
 		}
 	}
 
