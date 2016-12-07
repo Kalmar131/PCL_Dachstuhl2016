@@ -214,21 +214,15 @@ struct Plane
 		return fromVec(Eigen::Vector3f(line.d * x + line.p));
 	}
 
+	float distance(Point point)
+	{
+		return toVec(point).dot(n) - d;
+	}
+
 	Eigen::Vector3f p;
 	Eigen::Vector3f n;
 	float d;
 };
-
-float distPointToLine(Point point, Line line)
-{
-	return length((toVec(point) - line.p).cross(line.d)) / length(line.d);
-}
-
-float distPointToPlane(Point point, Plane plane)
-{
-//	return (toVec(point) - plane.p).dot(plane.n) / length(plane.n);
-	return toVec(point).dot(plane.n) - plane.d;
-}
 
 float getMinDistToPlanes(Point point, std::vector<Plane> planes)
 {
@@ -236,7 +230,7 @@ float getMinDistToPlanes(Point point, std::vector<Plane> planes)
 
   for (unsigned i = 0; i < planes.size(); ++i)
 	{
-    float d = fabs(distPointToPlane(point, planes[i]));
+    float d = fabs(planes[i].distance(point));
     if (d < minDist)
       minDist = d;
 	}
@@ -256,7 +250,7 @@ float getMinDistToRect(Point point, std::vector<Eigen::Vector3f> rect)
 
   for (unsigned i = 0; i < l.size(); ++i)
 	{
-    float d = distPointToLine(point, l[i]);
+    float d = l[i].distance(point);
     if (d < minDist)
       minDist = d;
 	}
@@ -677,6 +671,7 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput, Edges edgesInput)
 }
 
 //----------------------------------------------------------------
+
 pcl::Vertices createPolygon(unsigned i0, unsigned i1, unsigned i2, unsigned i3)
 {
 	pcl::Vertices polygon;
@@ -690,60 +685,218 @@ pcl::Vertices createPolygon(unsigned i0, unsigned i1, unsigned i2, unsigned i3)
 }
 
 
-
-std::vector< std::vector<Point> > getFaces(std::vector<Point> box)
+Eigen::Vector3f dirxy(std::vector<Point> box)
 {
-	std::vector< std::vector<Point> > out;
+	Eigen::Vector3f d = Eigen::Vector3f::Zero();
 
-	std::vector<pcl::Vertices> polygons;
-	polygons.push_back(createPolygon(0, 1, 2, 3));
-	polygons.push_back(createPolygon(4, 5, 6, 7));
-	polygons.push_back(createPolygon(0, 2, 4, 6));
-	polygons.push_back(createPolygon(1, 3, 5, 7));
-	polygons.push_back(createPolygon(0, 1, 4, 5));
-	polygons.push_back(createPolygon(2, 3, 6, 7));
-	
-	for (unsigned i = 0; i < polygons.size(); ++i)
+	for (unsigned i = 0; i < 4; ++i)
 	{
-		std::vector<Point> face;
-		for (unsigned j = 0; j < polygons[i].vertices.size(); ++j)
-		{
-			face.push_back(box[polygons[i].vertices[j]]);
-		}
-
-		out.push_back(face);
+		d(0) += box[i+4].x - box[i].x;
+		d(1) += box[i+4].y - box[i].y;
 	}
 
-	return out;
+	d /= 4;
+	//	printf("dx:%f dy:%f\n", d(0), d(1));
+
+	return d;
+}
+
+float distance(Plane& plane, std::vector<Point> points)
+{
+	float d = 0;
+
+	for (unsigned i = 0; i < points.size(); ++i)
+		d += ::fabs(plane.distance(points[i]));
+	d /= points.size();
+
+	return d;
+}
+
+unsigned leftOf(Plane& plane, std::vector<Point> points)
+{
+	unsigned n = 0;
+
+	for (unsigned i = 0; i < points.size(); ++i)
+		if (plane.distance(points[i]) > 0)
+			++n;
+	
+	return n;
+}
+
+std::vector<Plane> _getPlanes(std::vector<Point> points)
+{
+ 	std::vector<Plane> planes;
+
+	planes.push_back(Plane(points[0], points[1], points[4]));
+	planes.push_back(Plane(points[0], points[3], points[7]));
+	planes.push_back(Plane(points[1], points[2], points[5]));
+	planes.push_back(Plane(points[2], points[3], points[6]));
+
+	return planes;
 }
 
 std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt)
 {
-	std::vector< std::vector<Point> > faces = getFaces(boxRef);
+	std::vector<Plane> planes = _getPlanes(boxRef);
 	
+#if 0
 	unsigned minIdx = 0;
 	float minDist = std::numeric_limits<float>::max();
-	// exclude bottom plane
-	for (unsigned i = 1; i < faces.size(); ++i)
+	for (unsigned i = 0; i < planes.size(); ++i)
 	{
-		if (distance(boxTgt[0], faces[i]) < minDist)
+		float d = distance(planes[i], boxTgt);
+		printf("d:%f\n", d);
+		if (d < minDist)
 		{
 			minIdx = i;
-			minDist = distance(boxTgt[0], faces[i]);
+			minDist = d;
+		}
+	}
+#endif
+
+	std::vector<unsigned> listIdx;
+	Eigen::Vector3f dxy = dirxy(boxTgt);
+	for (unsigned i = 0; i < planes.size(); ++i)
+	{
+		//printf("pl %f %f\n", planes[i].n(0), planes[i].n(1));
+		if (::fabs(dxy(0)) > ::fabs(dxy(1)))
+		{
+			if (::fabs(planes[i].n(0)) > ::fabs(planes[i].n(1)))
+				listIdx.push_back(i);				
+		}
+		else
+		{
+			if (::fabs(planes[i].n(0)) < ::fabs(planes[i].n(1)))
+				listIdx.push_back(i);				
 		}
 	}
 
-	// extend box to align with plane
-	std::vector<Point> boxOut(boxTgt.size());
-	boxOut[0] = boxTgt[0];
-	boxOut[1] = boxTgt[1];
-	boxOut[2] = boxTgt[2];
-	boxOut[3] = boxTgt[3];
-	boxOut[4] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[0], boxTgt[4]));
-	boxOut[5] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[1], boxTgt[5]));
-	boxOut[6] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[2], boxTgt[6]));
-	boxOut[7] = Plane(faces[minIdx][0], faces[minIdx][1], faces[minIdx][2]).cut(Line(boxTgt[3], boxTgt[7]));
+	unsigned idx = listIdx[0];
+	for (unsigned i = 0; i < listIdx.size(); ++i)
+	{
+		printf("plane i:%d\n", listIdx[i]);
+		printf("left:%d\n", leftOf(planes[listIdx[i]], boxTgt));
 
+		if (leftOf(planes[listIdx[i]], boxTgt) > 0)
+			idx = listIdx[i];
+	}
+
+	unsigned above = 0;
+	unsigned inside = 0;
+	unsigned below = 0;
+
+	Point p1 = planes[idx].cut(Line(boxTgt[0], boxTgt[4]));
+	if (p1.z < boxTgt[0].z)
+		below++;
+	else if (p1.z > boxTgt[4].z)
+		above++;	
+	else
+	{
+		inside++;
+		printf("p1\n");
+	}
+
+	Point p2 = planes[idx].cut(Line(boxTgt[1], boxTgt[5]));
+	if (p2.z < boxTgt[1].z)
+		below++;
+	else if (p2.z > boxTgt[5].z)
+		above++;	
+	else
+	{
+		inside++;
+		printf("p2\n");
+	}
+
+	Point p3 = planes[idx].cut(Line(boxTgt[2], boxTgt[6]));
+	if (p3.z < boxTgt[2].z)
+		below++;
+	else if (p3.z > boxTgt[6].z)
+		above++;	
+	else
+	{
+		inside++;
+		printf("p3\n");
+	}
+	
+	Point p4 = planes[idx].cut(Line(boxTgt[3], boxTgt[7]));
+	if (p4.z < boxTgt[3].z)
+		below++;
+	else if (p4.z > boxTgt[7].z)
+		above++;	
+	else
+	{
+		inside++;
+		printf("p4\n");
+	}
+
+	Point q1 = planes[idx].cut(1 ? Line(boxTgt[0], boxTgt[1]) : Line(boxTgt[0], boxTgt[3]));
+	Point q2 = planes[idx].cut(1 ? Line(boxTgt[3], boxTgt[2]) : Line(boxTgt[1], boxTgt[2]));
+	Point q3 = planes[idx].cut(1 ? Line(boxTgt[4], boxTgt[5]) : Line(boxTgt[4], boxTgt[7]));
+	Point q4 = planes[idx].cut(1 ? Line(boxTgt[7], boxTgt[6]) : Line(boxTgt[5], boxTgt[6]));
+
+	printf("xxx:%d %d %d\n", above, inside, below);
+	
+	std::vector<Point> boxOut(boxTgt.size());
+	if (above == 4 and inside == 0 and below == 0)
+	{
+		boxOut[0] = boxTgt[0];
+		boxOut[1] = boxTgt[1];
+		boxOut[2] = boxTgt[2];
+		boxOut[3] = boxTgt[3];
+		
+	}
+	else if (above == 2 and inside == 2 and below == 0)
+	{
+		boxOut[0] = boxTgt[0];
+		boxOut[1] = boxTgt[1];
+		boxOut[2] = boxTgt[2];
+		boxOut[3] = boxTgt[3];
+
+		if ((p1.z > boxTgt[4].z) and (p4.z > boxTgt[7].z))
+		{
+			boxOut[4] = boxTgt[4];
+			boxOut[5] = q1;
+			boxOut[6] = q2;
+ 			boxOut[7] = boxTgt[7];
+		}
+		
+		if ((p2.z > boxTgt[5].z) and (p3.z > boxTgt[6].z))
+		{
+			printf("AAA\n");
+#if 0
+			boxOut[4] = p1;
+			boxOut[5] = Plane(p1, p4, Point(0,0,p1.z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[6] = Plane(p1, p4, Point(0,0,p4.z)).cut(Line(boxTgt[2], boxTgt[6]));
+			boxOut[7] = p4;
+#endif
+
+#if 1
+			boxOut[0] = p1;
+			boxOut[1] = Plane(p1, p4, Point(0,0,p1.z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[2] = Plane(p1, p4, Point(0,0,p4.z)).cut(Line(boxTgt[2], boxTgt[6]));
+			boxOut[3] = p4;
+			boxOut[4] = q3;
+			boxOut[5] = boxTgt[5];
+			boxOut[6] = boxTgt[6];
+			boxOut[7] = q4;
+#endif
+		}
+	}
+	else if (above == 2 and inside == 0 and below == 2)
+	{
+	}
+	else if (above == 0 and inside == 2 and below == 2)
+	{
+	}
+	else if (above == 0 and inside == 0 and below == 4)
+	{
+	}
+	else
+	{
+		printf("unknown box alignment constellation\n");
+	}
+
+	printf("out-size: %d\n", boxOut.size());
 	return boxOut;
 }
 
@@ -753,12 +906,12 @@ std::vector<Point> createConvexHull(Point min, Point max)
 
 	out.push_back(min);
 	out.push_back(Point(max.x, min.y, min.z)); 
-	out.push_back(Point(min.x, max.y, min.z)); 
 	out.push_back(Point(max.x, max.y, min.z)); 
+	out.push_back(Point(min.x, max.y, min.z)); 
 	out.push_back(Point(min.x, min.y, max.z)); 
 	out.push_back(Point(max.x, min.y, max.z)); 
-	out.push_back(Point(min.x, max.y, max.z)); 
 	out.push_back(max);
+	out.push_back(Point(min.x, max.y, max.z)); 
 
 	return out;
 }
@@ -788,10 +941,10 @@ pcl::PolygonMesh::Ptr makeSurface(Cloud::Ptr cloudInput)
 
 	meshOutput->polygons.push_back(createPolygon(0, 1, 2, 3));
 	meshOutput->polygons.push_back(createPolygon(4, 5, 6, 7));
-	meshOutput->polygons.push_back(createPolygon(0, 2, 4, 6));
-	meshOutput->polygons.push_back(createPolygon(1, 3, 5, 7));
-	meshOutput->polygons.push_back(createPolygon(0, 1, 4, 5));
-	meshOutput->polygons.push_back(createPolygon(2, 3, 6, 7));
+	meshOutput->polygons.push_back(createPolygon(0, 1, 5, 4));
+	meshOutput->polygons.push_back(createPolygon(0, 3, 7, 4));
+	meshOutput->polygons.push_back(createPolygon(1, 2, 6, 5));
+	meshOutput->polygons.push_back(createPolygon(2, 3, 7, 6));
 
 	return meshOutput;	
 }
@@ -1337,7 +1490,7 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 			unsigned numOutliersRight = 0;
 			for (unsigned j = 0; j < cloudInput->points.size(); ++j)
 			{
-				float dist = distPointToPlane(cloudInput->points[j], plane);
+				float dist = plane.distance(cloudInput->points[j]);
 				if (fabs(dist) < threshold)
 				{
 					if (dist < 0)
@@ -2152,7 +2305,6 @@ int main (int argc, char** argv)
 
 	else if (toolname == "align-sides")
 	{
-		float radian = atof(argv[argn++]);
 		const char* refFilename = argv[argn++];
 		const char* inFilename = argv[argn++];
 		const char* outFilename = argv[argn++];
@@ -2357,9 +2509,8 @@ int main (int argc, char** argv)
 				Line line1 = bars[b1].lineCenter;
 				Line line2 = bars[b2].lineCenter;
 
-				float dist1 = line1.distance(fromVec(line2.p));
 				float dist2 = line1.distance(line2);
-				printf("b1:%d b2:%d distance:%f %f angle:%f -> %s : %s\n", b1, b2, dist1, dist2, line1.d.dot(line2.d), dist1 < 0.12 ? "same": "different", dist2 < 0.06 and  line1.d.dot(line2.d) > 0.98 ? "same" : "different");
+				printf("b1:%d b2:%d distance:%f angle:%f -> %s\n", b1, b2, dist2, line1.d.dot(line2.d), dist2 < 0.06 and line1.d.dot(line2.d) > 0.98 ? "same" : "different");
 				if (dist2 < 0.06 and line1.d.dot(line2.d) > 0.98)
 				{
 					for (unsigned sliceId = clusters[bars[b1].listModel[bars[b1].listModel.size()-1].clusterId].sliceId+1;
