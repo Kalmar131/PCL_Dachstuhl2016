@@ -531,6 +531,11 @@ struct Edge
 	: start(start_), end(end_), color(color_)
 	{}
 
+	bool operator < (const Edge& o) const
+	{
+		return start < o.start ? true : (start == o.start ? end < o.end: false);
+	}
+
 	unsigned start;
 	unsigned end;
 	Color color;
@@ -739,21 +744,6 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 {
 	std::vector<Plane> planes = _getPlanes(boxRef);
 	
-#if 0
-	unsigned minIdx = 0;
-	float minDist = std::numeric_limits<float>::max();
-	for (unsigned i = 0; i < planes.size(); ++i)
-	{
-		float d = distance(planes[i], boxTgt);
-		printf("d:%f\n", d);
-		if (d < minDist)
-		{
-			minIdx = i;
-			minDist = d;
-		}
-	}
-#endif
-
 	std::vector<unsigned> listIdx;
 	Eigen::Vector3f dxy = dirxy(boxTgt);
 	for (unsigned i = 0; i < planes.size(); ++i)
@@ -781,122 +771,241 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 			idx = listIdx[i];
 	}
 
+	std::map<Edge, Point> cutPoints;
+
+	// vertical edges
+	cutPoints[Edge(0,4)] = planes[idx].cut(Line(boxTgt[0], boxTgt[4]));
+	cutPoints[Edge(1,5)] = planes[idx].cut(Line(boxTgt[1], boxTgt[5]));
+	cutPoints[Edge(2,6)] = planes[idx].cut(Line(boxTgt[2], boxTgt[6]));
+	cutPoints[Edge(3,7)] = planes[idx].cut(Line(boxTgt[3], boxTgt[7]));
+
+	// horizontal edges
+	cutPoints[Edge(0,1)] = planes[idx].cut(Line(boxTgt[0], boxTgt[1]));
+	cutPoints[Edge(2,3)] = planes[idx].cut(Line(boxTgt[2], boxTgt[3]));
+	cutPoints[Edge(4,5)] = planes[idx].cut(Line(boxTgt[4], boxTgt[5]));
+	cutPoints[Edge(6,7)] = planes[idx].cut(Line(boxTgt[6], boxTgt[7]));
+
+	// horizontal edges
+	cutPoints[Edge(0,3)] = planes[idx].cut(Line(boxTgt[0], boxTgt[3]));
+	cutPoints[Edge(1,2)] = planes[idx].cut(Line(boxTgt[1], boxTgt[2]));
+	cutPoints[Edge(4,7)] = planes[idx].cut(Line(boxTgt[4], boxTgt[7]));
+	cutPoints[Edge(5,6)] = planes[idx].cut(Line(boxTgt[5], boxTgt[6]));
+
 	unsigned above = 0;
-	unsigned inside = 0;
 	unsigned below = 0;
 
-	Point p1 = planes[idx].cut(Line(boxTgt[0], boxTgt[4]));
-	if (p1.z < boxTgt[0].z)
-		below++;
-	else if (p1.z > boxTgt[4].z)
-		above++;	
-	else
-	{
-		inside++;
-		printf("p1\n");
-	}
+	float zLow = boxTgt[0].z;
+	float zHigh = boxTgt[7].z;
 
-	Point p2 = planes[idx].cut(Line(boxTgt[1], boxTgt[5]));
-	if (p2.z < boxTgt[1].z)
+	if (cutPoints[Edge(0,4)].z < zLow)
 		below++;
-	else if (p2.z > boxTgt[5].z)
+	else if (cutPoints[Edge(0,4)].z > zHigh)
 		above++;	
-	else
-	{
-		inside++;
-		printf("p2\n");
-	}
 
-	Point p3 = planes[idx].cut(Line(boxTgt[2], boxTgt[6]));
-	if (p3.z < boxTgt[2].z)
+	if (cutPoints[Edge(1,5)].z < zLow)
 		below++;
-	else if (p3.z > boxTgt[6].z)
+	else if (cutPoints[Edge(1,5)].z > zHigh)
 		above++;	
-	else
-	{
-		inside++;
-		printf("p3\n");
-	}
+
+	if (cutPoints[Edge(2,6)].z < zLow)
+		below++;
+	else if (cutPoints[Edge(2,6)].z > zHigh)
+		above++;	
 	
-	Point p4 = planes[idx].cut(Line(boxTgt[3], boxTgt[7]));
-	if (p4.z < boxTgt[3].z)
+	if (cutPoints[Edge(3,7)].z < zLow)
 		below++;
-	else if (p4.z > boxTgt[7].z)
+	else if (cutPoints[Edge(3,7)].z > zHigh)
 		above++;	
-	else
-	{
-		inside++;
-		printf("p4\n");
-	}
 
-	Point q1 = planes[idx].cut(1 ? Line(boxTgt[0], boxTgt[1]) : Line(boxTgt[0], boxTgt[3]));
-	Point q2 = planes[idx].cut(1 ? Line(boxTgt[3], boxTgt[2]) : Line(boxTgt[1], boxTgt[2]));
-	Point q3 = planes[idx].cut(1 ? Line(boxTgt[4], boxTgt[5]) : Line(boxTgt[4], boxTgt[7]));
-	Point q4 = planes[idx].cut(1 ? Line(boxTgt[7], boxTgt[6]) : Line(boxTgt[5], boxTgt[6]));
+	printf("xxx:%d ... %d\n", above, below);
 
-	printf("xxx:%d %d %d\n", above, inside, below);
-	
 	std::vector<Point> boxOut(boxTgt.size());
-	if (above == 4 and inside == 0 and below == 0)
-	{
-		boxOut[0] = boxTgt[0];
-		boxOut[1] = boxTgt[1];
-		boxOut[2] = boxTgt[2];
-		boxOut[3] = boxTgt[3];
-		
-	}
-	else if (above == 2 and inside == 2 and below == 0)
-	{
-		boxOut[0] = boxTgt[0];
-		boxOut[1] = boxTgt[1];
-		boxOut[2] = boxTgt[2];
-		boxOut[3] = boxTgt[3];
+	for (unsigned i = 0; i < boxTgt.size(); ++i)
+		boxOut[i] = boxTgt[i];
 
-		if ((p1.z > boxTgt[4].z) and (p4.z > boxTgt[7].z))
+	if (above == 4 and below == 0)
+	{
+		// just a copy, nothing more to do here
+	}
+	else if (above == 2 and below == 0)
+	{
+		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
-			boxOut[4] = boxTgt[4];
-			boxOut[5] = q1;
-			boxOut[6] = q2;
- 			boxOut[7] = boxTgt[7];
-		}
-		
-		if ((p2.z > boxTgt[5].z) and (p3.z > boxTgt[6].z))
-		{
-			printf("AAA\n");
+			printf("AAA0\n");
+
 #if 0
-			boxOut[4] = p1;
-			boxOut[5] = Plane(p1, p4, Point(0,0,p1.z)).cut(Line(boxTgt[1], boxTgt[5]));
-			boxOut[6] = Plane(p1, p4, Point(0,0,p4.z)).cut(Line(boxTgt[2], boxTgt[6]));
-			boxOut[7] = p4;
+			boxOut[4] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[0], boxTgt[4]));
+			boxOut[5] = cutPoints[Edge(1,5)];
+			boxOut[6] = cutPoints[Edge(2,6)];
+ 			boxOut[7] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[3], boxTgt[7]));
+#else
+			boxOut[0] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[0], boxTgt[4]));
+			boxOut[1] = cutPoints[Edge(1,5)];
+			boxOut[2] = cutPoints[Edge(2,6)];
+ 			boxOut[3] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[3], boxTgt[7]));
+			boxOut[5] = cutPoints[Edge(4,5)];
+			boxOut[6] = cutPoints[Edge(6,7)];
 #endif
+		}
+		
+		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
+		{
+			printf("AAA1\n");
 
-#if 1
-			boxOut[0] = p1;
-			boxOut[1] = Plane(p1, p4, Point(0,0,p1.z)).cut(Line(boxTgt[1], boxTgt[5]));
-			boxOut[2] = Plane(p1, p4, Point(0,0,p4.z)).cut(Line(boxTgt[2], boxTgt[6]));
-			boxOut[3] = p4;
-			boxOut[4] = q3;
-			boxOut[5] = boxTgt[5];
-			boxOut[6] = boxTgt[6];
-			boxOut[7] = q4;
+#if 0
+			boxOut[4] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[0], boxTgt[4]));
+ 			boxOut[5] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[6] = cutPoints[Edge(2,6)];
+			boxOut[7] = cutPoints[Edge(3,7)];
+#else
+			boxOut[0] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[0], boxTgt[4]));
+ 			boxOut[1] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[2] = cutPoints[Edge(2,6)];
+			boxOut[3] = cutPoints[Edge(3,7)];
+			boxOut[6] = cutPoints[Edge(5,6)];
+			boxOut[7] = cutPoints[Edge(4,7)];
+#endif
+		}
+		
+		if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
+		{
+			printf("AAA2\n");
+#if 0
+			boxOut[4] = cutPoints[Edge(3,7)];
+			boxOut[5] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[6] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[2], boxTgt[6]));
+			boxOut[7] = cutPoints[Edge(3,7)];
+#else
+			boxOut[0] = cutPoints[Edge(0,4)];
+			boxOut[1] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[1], boxTgt[5]));
+			boxOut[2] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[2], boxTgt[6]));
+			boxOut[3] = cutPoints[Edge(3,7)];
+			boxOut[4] = cutPoints[Edge(4,5)];
+			boxOut[7] = cutPoints[Edge(6,7)];
+#endif
+		}
+
+		if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
+		{
+			printf("AAA3\n");
+
+#if 0
+			boxOut[4] = cutPoints[Edge(0,4)];
+			boxOut[5] = cutPoints[Edge(1,5)];
+			boxOut[6] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[2], boxTgt[6]));
+ 			boxOut[7] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[3], boxTgt[7]));
+#else
+			boxOut[0] = cutPoints[Edge(0,4)];
+			boxOut[1] = cutPoints[Edge(1,5)];
+			boxOut[2] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[2], boxTgt[6]));
+ 			boxOut[3] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[3], boxTgt[7]));
+			boxOut[4] = cutPoints[Edge(4,7)];
+			boxOut[5] = cutPoints[Edge(5,6)];
 #endif
 		}
 	}
-	else if (above == 2 and inside == 0 and below == 2)
+	else if (above == 2 and below == 2)
 	{
+		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
+		{
+			printf("BBB0\n");
+
+			boxOut[1] = cutPoints[Edge(0,1)];
+			boxOut[2] = cutPoints[Edge(2,3)];
+			boxOut[5] = cutPoints[Edge(4,5)];
+			boxOut[6] = cutPoints[Edge(6,7)];
+		}
+
+		else if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
+		{
+			printf("BBB1\n");
+
+			boxOut[2] = cutPoints[Edge(1,2)];
+			boxOut[3] = cutPoints[Edge(0,3)];
+			boxOut[6] = cutPoints[Edge(5,6)];
+ 			boxOut[7] = cutPoints[Edge(4,7)];
+		}
+
+		else if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
+		{
+			printf("BBB2\n");
+
+			boxOut[0] = cutPoints[Edge(0,1)];
+			boxOut[3] = cutPoints[Edge(2,3)];
+			boxOut[4] = cutPoints[Edge(4,5)];
+ 			boxOut[7] = cutPoints[Edge(6,7)];
+		}
+
+		else if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
+		{
+			printf("BBB3\n");
+
+			boxOut[0] = cutPoints[Edge(0,3)];
+			boxOut[1] = cutPoints[Edge(1,2)];
+			boxOut[4] = cutPoints[Edge(4,7)];
+			boxOut[5] = cutPoints[Edge(5,6)];
+		}
 	}
-	else if (above == 0 and inside == 2 and below == 2)
+
+	else if (above == 0 and below == 2)
 	{
+		if ((cutPoints[Edge(1,5)].z < zLow) and (cutPoints[Edge(2, 6)].z < zLow))
+		{
+			printf("CCC0\n");
+
+			boxOut[1] = cutPoints[Edge(0,1)];
+			boxOut[2] = cutPoints[Edge(2,3)];
+			boxOut[4] = cutPoints[Edge(0,4)];
+			boxOut[5] = cutPoints[Edge(0,4)];
+			boxOut[6] = cutPoints[Edge(3,7)];
+ 			boxOut[7] = cutPoints[Edge(3,7)];
+		}
+
+		else if ((cutPoints[Edge(2,6)].z < zLow) and (cutPoints[Edge(3,7)].z < zLow))
+		{
+			printf("CCC1\n");
+
+			boxOut[2] = cutPoints[Edge(1,2)];
+			boxOut[3] = cutPoints[Edge(0,3)];
+			boxOut[4] = cutPoints[Edge(0,4)];
+			boxOut[5] = cutPoints[Edge(1,5)];
+			boxOut[6] = cutPoints[Edge(1,5)];
+ 			boxOut[7] = cutPoints[Edge(0,4)];
+		}
+
+		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(3, 7)].z < zLow))
+		{
+			printf("CCC2\n");
+
+			boxOut[0] = cutPoints[Edge(0,1)];
+			boxOut[3] = cutPoints[Edge(2,3)];
+			boxOut[4] = cutPoints[Edge(1,5)];
+			boxOut[5] = cutPoints[Edge(1,5)];
+			boxOut[6] = cutPoints[Edge(2,6)];
+ 			boxOut[7] = cutPoints[Edge(2,6)];
+		}
+
+		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(1,5)].z < zLow))
+		{
+			printf("CCC3\n");
+
+			boxOut[0] = cutPoints[Edge(0,3)];
+			boxOut[1] = cutPoints[Edge(1,2)];
+			boxOut[4] = cutPoints[Edge(3,7)];
+			boxOut[5] = cutPoints[Edge(2,6)];
+			boxOut[6] = cutPoints[Edge(2,6)];
+ 			boxOut[7] = cutPoints[Edge(3,7)];
+		}
 	}
-	else if (above == 0 and inside == 0 and below == 4)
+	else if (above == 0 and below == 4)
 	{
+		// empty box
 	}
 	else
 	{
 		printf("unknown box alignment constellation\n");
 	}
 
-	printf("out-size: %d\n", boxOut.size());
 	return boxOut;
 }
 
