@@ -192,9 +192,19 @@ struct Plane
 		p = toVec(p1);
 		n = (toVec(p2) - toVec(p1)).cross(toVec(p3) - toVec(p1));
 		n = n/length(n);
-		if (toVec(p1).dot(n) < 0)
+		if (p.dot(n) < 0)
 			n = -n;
-		d = n.dot(toVec(p1));
+		d = n.dot(p);
+	}
+
+	Plane(Eigen::Vector3f p_, Eigen::Vector3f n_)
+	{
+		p = p_;
+		n = n_;
+		n = n/length(n);
+		if (p.dot(n) < 0)
+			n = -n;
+		d = n.dot(p);
 	}
 
 	Line cut(Plane plane)
@@ -208,10 +218,14 @@ struct Plane
 		return line;
 	}
 
+	float distance(Line line)
+	{
+		return (-((line.p - p).dot(n))/line.d.dot(n));
+	}
+
 	Point cut(Line line)
 	{
-		float x = (-((line.p - p).dot(n))/line.d.dot(n));
-		return fromVec(Eigen::Vector3f(line.d * x + line.p));
+		return fromVec(Eigen::Vector3f(line.d * distance(line) + line.p));
 	}
 
 	float distance(Point point)
@@ -236,6 +250,24 @@ float getMinDistToPlanes(Point point, std::vector<Plane> planes)
 	}
 
   return minDist;
+}
+
+unsigned getIdxOfMinDistToPlanes(Point point, std::vector<Plane> planes)
+{
+  float minDist = FLT_MAX;
+	unsigned minIdx = 0;
+
+  for (unsigned i = 0; i < planes.size(); ++i)
+	{
+    float d = fabs(planes[i].distance(point));
+    if (d < minDist)
+		{
+      minDist = d;
+			minIdx = i;
+		}
+	}
+
+  return minIdx;
 }
 
 float getMinDistToRect(Point point, std::vector<Eigen::Vector3f> rect)
@@ -302,14 +334,29 @@ struct Cluster
 		}
 };
 
+Plane fitPlane(Cloud::Ptr cloud)
+{
+	Cloud proj; 
+	pcl::PCA< Point > pca; 
+	pca.setInputCloud(cloud); 
+	pca.project(*cloud, proj);
+
+	Eigen::Vector3f mean;
+	mean(0) = pca.getMean()(0);
+	mean(1) = pca.getMean()(1);
+	mean(2) = pca.getMean()(2);
+
+	return Plane(mean, pca.getEigenVectors().col(2));
+}
+
 struct Model
 {
 	Model()
-	: box(new Cloud)
+	: box(new Cloud), aligned(false)
 	{}
 
 	Model(unsigned clusterId_)
-	: clusterId(clusterId_), box(new Cloud)
+	: clusterId(clusterId_), box(new Cloud), aligned(false)
 	{}
 
 	bool isConsistent(std::vector<Cluster>& clusters)
@@ -354,6 +401,71 @@ struct Model
 		dist /= cloud->points.size();
 
 		return dist;
+	}
+	
+	float fitPlanes(Cloud::Ptr cloud, float dist)
+	{
+		std::vector<Plane> planes = getPlanes();
+		//for (unsigned p = 0; p < planes.size(); ++p)	
+		//	printf("unfitted plane: %f %f %f\n", planes[p].n(0), planes[p].n(1), planes[p].n(2));
+
+		std::vector<Cloud::Ptr> cloudsPlane(planes.size());
+		for (unsigned p = 0; p < cloudsPlane.size(); ++p)	
+		{
+			Cloud::Ptr ptr(new Cloud);
+			cloudsPlane[p] = ptr;
+		}
+
+		for (unsigned i = 0; i < cloud->points.size(); ++i)
+		{
+			unsigned p = getIdxOfMinDistToPlanes(cloud->points[i], planes);
+			cloudsPlane[p]->points.push_back(cloud->points[i]);
+		}
+
+		std::vector<Plane> fittedPlanes;
+		for (unsigned p = 0; p < cloudsPlane.size(); ++p)
+		{
+			if (cloudsPlane[p]->points.size() >= 50)
+			{
+				Plane plane = fitPlane(cloudsPlane[p]);
+				fittedPlanes.push_back(plane);
+
+				//printf("fitted plane: %f %f %f\n", plane.n(0), plane.n(1), plane.n(2));
+			}
+			else
+				fittedPlanes.push_back(planes[p]);
+		}
+
+		float distFitted = 0;
+		for (unsigned i = 0; i < cloud->points.size(); ++i)
+		{
+			distFitted += getMinDistToPlanes(cloud->points[i], fittedPlanes);
+		}
+		distFitted /= cloud->points.size();
+		//printf("--> %f\n", distFitted);
+		if (distFitted > dist)
+			return distFitted;
+
+		Plane top(Point(0,0,box->points[0].z), Point(0,1,box->points[0].z), Point(1,0,box->points[0].z));
+		Plane bot(Point(0,0,box->points[7].z), Point(0,1,box->points[7].z), Point(1,0,box->points[7].z));
+
+		Line line1 = fittedPlanes[0].cut(fittedPlanes[1]);
+		box->points[0] = top.cut(line1);
+		box->points[4] = bot.cut(line1);
+
+		Line line2 = fittedPlanes[1].cut(fittedPlanes[2]);
+		box->points[1] = top.cut(line2);
+		box->points[5] = bot.cut(line2);
+
+		Line line3 = fittedPlanes[2].cut(fittedPlanes[3]);
+		box->points[2] = top.cut(line3);
+		box->points[6] = bot.cut(line3);
+
+		Line line4 = fittedPlanes[3].cut(fittedPlanes[0]);
+		box->points[3] = top.cut(line4);
+		box->points[7] = bot.cut(line4);
+
+		return distFitted;
 	}
 
 	void approximateSides(Cloud::Ptr minmax, Eigen::Vector3f d)
@@ -402,6 +514,7 @@ struct Model
 
 	unsigned clusterId;
 	Cloud::Ptr box;
+	bool aligned;
 };
 
 struct Bar
@@ -559,19 +672,19 @@ Edges createEdgesForBox(unsigned base = 0)
 
 	Color color = Color(rand() % 256, rand() % 256, rand() % 256);
 	edges.push_back(Edge(base+0, base+1, color));
+	edges.push_back(Edge(base+1, base+2, color));
 	edges.push_back(Edge(base+2, base+3, color));
+	edges.push_back(Edge(base+3, base+0, color));
+
 	edges.push_back(Edge(base+4, base+5, color));
+	edges.push_back(Edge(base+5, base+6, color));
 	edges.push_back(Edge(base+6, base+7, color));
+	edges.push_back(Edge(base+7, base+4, color));
 
 	edges.push_back(Edge(base+0, base+4, color));
 	edges.push_back(Edge(base+1, base+5, color));
 	edges.push_back(Edge(base+2, base+6, color));
 	edges.push_back(Edge(base+3, base+7, color));
-
-	edges.push_back(Edge(base+0, base+2, color));
-	edges.push_back(Edge(base+1, base+3, color));
-	edges.push_back(Edge(base+4, base+6, color));
-	edges.push_back(Edge(base+5, base+7, color));
 
 	return edges;
 }
@@ -701,7 +814,7 @@ Eigen::Vector3f dirxy(std::vector<Point> box)
 	}
 
 	d /= 4;
-	//	printf("dx:%f dy:%f\n", d(0), d(1));
+	printf("dx:%f dy:%f\n", d(0), d(1));
 
 	return d;
 }
@@ -740,8 +853,10 @@ std::vector<Plane> _getPlanes(std::vector<Point> points)
 	return planes;
 }
 
-std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt)
+std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt)
 {
+	printf("boxRef:%d -> %f %f\n", boxRef.size(), boxRef[0].z, boxRef[7].z);
+	printf("boxTgt:%d -> %f %f\n", boxTgt.size(), boxTgt[0].z, boxTgt[7].z);
 	std::vector<Plane> planes = _getPlanes(boxRef);
 	
 	std::vector<unsigned> listIdx;
@@ -760,16 +875,28 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 				listIdx.push_back(i);				
 		}
 	}
+	printf("++++++ listidx-size:%d\n", listIdx.size());
 
+	bool maximize = ::fabs(dxy(0)) > ::fabs(dxy(1)) ? dxy(0) > 0 : dxy(1) > 0;
+
+	float optDist = maximize ? FLT_MIN : FLT_MAX;
 	unsigned idx = listIdx[0];
 	for (unsigned i = 0; i < listIdx.size(); ++i)
 	{
-		printf("plane i:%d\n", listIdx[i]);
+#if 0
 		printf("left:%d\n", leftOf(planes[listIdx[i]], boxTgt));
-
 		if (leftOf(planes[listIdx[i]], boxTgt) > 0)
 			idx = listIdx[i];
+#endif
+		float dist = planes[listIdx[i]].distance(Line(toVec(boxTgt[0]), dxy));
+		printf("plane i:%d d:%f\n", listIdx[i], dist);
+		if (maximize ? dist > optDist : dist < optDist)
+		{
+			optDist = dist;
+			idx = listIdx[i];
+		}
 	}
+	printf("+++++++ idx:%d\n", idx);
 
 	std::map<Edge, Point> cutPoints;
 
@@ -819,13 +946,15 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 
 	printf("xxx:%d ... %d\n", above, below);
 
+	std::vector<std::vector<Point> > res;
 	std::vector<Point> boxOut(boxTgt.size());
-	for (unsigned i = 0; i < boxTgt.size(); ++i)
-		boxOut[i] = boxTgt[i];
-
+ 
 	if (above == 4 and below == 0)
 	{
-		// just a copy, nothing more to do here
+		printf("EEE0\n");
+
+		boxOut = boxTgt;
+		res.push_back(boxOut);
 	}
 	else if (above == 2 and below == 0)
 	{
@@ -833,75 +962,84 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 		{
 			printf("AAA0\n");
 
-#if 0
+			boxOut = boxTgt;
 			boxOut[4] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[0], boxTgt[4]));
 			boxOut[5] = cutPoints[Edge(1,5)];
 			boxOut[6] = cutPoints[Edge(2,6)];
  			boxOut[7] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[3], boxTgt[7]));
-#else
+			res.push_back(boxOut);
+
+			boxOut = boxTgt;
 			boxOut[0] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[0], boxTgt[4]));
 			boxOut[1] = cutPoints[Edge(1,5)];
 			boxOut[2] = cutPoints[Edge(2,6)];
  			boxOut[3] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[3], boxTgt[7]));
 			boxOut[5] = cutPoints[Edge(4,5)];
 			boxOut[6] = cutPoints[Edge(6,7)];
-#endif
+			res.push_back(boxOut);
 		}
 		
 		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
 		{
 			printf("AAA1\n");
 
-#if 0
+			boxOut = boxTgt;
 			boxOut[4] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[0], boxTgt[4]));
  			boxOut[5] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[1], boxTgt[5]));
 			boxOut[6] = cutPoints[Edge(2,6)];
 			boxOut[7] = cutPoints[Edge(3,7)];
-#else
+			res.push_back(boxOut);
+
+			boxOut = boxTgt;
 			boxOut[0] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[0], boxTgt[4]));
  			boxOut[1] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[1], boxTgt[5]));
 			boxOut[2] = cutPoints[Edge(2,6)];
 			boxOut[3] = cutPoints[Edge(3,7)];
 			boxOut[6] = cutPoints[Edge(5,6)];
 			boxOut[7] = cutPoints[Edge(4,7)];
-#endif
+			res.push_back(boxOut);
 		}
 		
 		if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
 		{
 			printf("AAA2\n");
-#if 0
+
+			boxOut = boxTgt;
 			boxOut[4] = cutPoints[Edge(3,7)];
 			boxOut[5] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[1], boxTgt[5]));
 			boxOut[6] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[2], boxTgt[6]));
 			boxOut[7] = cutPoints[Edge(3,7)];
-#else
+			res.push_back(boxOut);
+
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,4)];
 			boxOut[1] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[1], boxTgt[5]));
 			boxOut[2] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(3,7)].z)).cut(Line(boxTgt[2], boxTgt[6]));
 			boxOut[3] = cutPoints[Edge(3,7)];
 			boxOut[4] = cutPoints[Edge(4,5)];
 			boxOut[7] = cutPoints[Edge(6,7)];
-#endif
+			res.push_back(boxOut);
 		}
 
 		if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
 			printf("AAA3\n");
 
-#if 0
+			boxOut = boxTgt;
 			boxOut[4] = cutPoints[Edge(0,4)];
 			boxOut[5] = cutPoints[Edge(1,5)];
 			boxOut[6] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[2], boxTgt[6]));
  			boxOut[7] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[3], boxTgt[7]));
-#else
+			res.push_back(boxOut);
+
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,4)];
 			boxOut[1] = cutPoints[Edge(1,5)];
 			boxOut[2] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[2], boxTgt[6]));
  			boxOut[3] = Plane(cutPoints[Edge(0,4)], cutPoints[Edge(1,5)], Point(0,0,cutPoints[Edge(0,4)].z)).cut(Line(boxTgt[3], boxTgt[7]));
 			boxOut[4] = cutPoints[Edge(4,7)];
 			boxOut[5] = cutPoints[Edge(5,6)];
-#endif
+			res.push_back(boxOut);
 		}
 	}
 	else if (above == 2 and below == 2)
@@ -910,40 +1048,48 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 		{
 			printf("BBB0\n");
 
+			boxOut = boxTgt;
 			boxOut[1] = cutPoints[Edge(0,1)];
 			boxOut[2] = cutPoints[Edge(2,3)];
 			boxOut[5] = cutPoints[Edge(4,5)];
 			boxOut[6] = cutPoints[Edge(6,7)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
 		{
 			printf("BBB1\n");
 
+			boxOut = boxTgt;
 			boxOut[2] = cutPoints[Edge(1,2)];
 			boxOut[3] = cutPoints[Edge(0,3)];
 			boxOut[6] = cutPoints[Edge(5,6)];
  			boxOut[7] = cutPoints[Edge(4,7)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
 		{
 			printf("BBB2\n");
 
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,1)];
 			boxOut[3] = cutPoints[Edge(2,3)];
 			boxOut[4] = cutPoints[Edge(4,5)];
  			boxOut[7] = cutPoints[Edge(6,7)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
 			printf("BBB3\n");
 
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,3)];
 			boxOut[1] = cutPoints[Edge(1,2)];
 			boxOut[4] = cutPoints[Edge(4,7)];
 			boxOut[5] = cutPoints[Edge(5,6)];
+			res.push_back(boxOut);
 		}
 	}
 
@@ -953,48 +1099,56 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 		{
 			printf("CCC0\n");
 
+			boxOut = boxTgt;
 			boxOut[1] = cutPoints[Edge(0,1)];
 			boxOut[2] = cutPoints[Edge(2,3)];
 			boxOut[4] = cutPoints[Edge(0,4)];
 			boxOut[5] = cutPoints[Edge(0,4)];
 			boxOut[6] = cutPoints[Edge(3,7)];
  			boxOut[7] = cutPoints[Edge(3,7)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(2,6)].z < zLow) and (cutPoints[Edge(3,7)].z < zLow))
 		{
 			printf("CCC1\n");
 
+			boxOut = boxTgt;
 			boxOut[2] = cutPoints[Edge(1,2)];
 			boxOut[3] = cutPoints[Edge(0,3)];
 			boxOut[4] = cutPoints[Edge(0,4)];
 			boxOut[5] = cutPoints[Edge(1,5)];
 			boxOut[6] = cutPoints[Edge(1,5)];
  			boxOut[7] = cutPoints[Edge(0,4)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(3, 7)].z < zLow))
 		{
 			printf("CCC2\n");
 
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,1)];
 			boxOut[3] = cutPoints[Edge(2,3)];
 			boxOut[4] = cutPoints[Edge(1,5)];
 			boxOut[5] = cutPoints[Edge(1,5)];
 			boxOut[6] = cutPoints[Edge(2,6)];
  			boxOut[7] = cutPoints[Edge(2,6)];
+			res.push_back(boxOut);
 		}
 
 		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(1,5)].z < zLow))
 		{
 			printf("CCC3\n");
 
+			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,3)];
 			boxOut[1] = cutPoints[Edge(1,2)];
 			boxOut[4] = cutPoints[Edge(3,7)];
 			boxOut[5] = cutPoints[Edge(2,6)];
 			boxOut[6] = cutPoints[Edge(2,6)];
  			boxOut[7] = cutPoints[Edge(3,7)];
+			res.push_back(boxOut);
 		}
 	}
 	else if (above == 0 and below == 4)
@@ -1003,10 +1157,12 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 	}
 	else
 	{
+		boxOut = boxTgt;
+		res.push_back(boxOut);
 		printf("unknown box alignment constellation\n");
 	}
 
-	return boxOut;
+	return res;
 }
 
 std::vector<Point> createConvexHull(Point min, Point max)
@@ -1024,6 +1180,7 @@ std::vector<Point> createConvexHull(Point min, Point max)
 
 	return out;
 }
+
 
 //----------------------------------------------------------------
 
@@ -1464,7 +1621,7 @@ Eigen::Vector3f translate(Point p1, Point p2, Eigen::Vector3f n, float s, Point 
 
 typedef std::vector<std::pair<unsigned, unsigned> > Network;
 
-void dump(std::vector<Bar> bars, std::vector<Cluster>& clusters)
+void dump(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 {
 	for (unsigned b = 0; b < bars.size(); ++b)
 	{
@@ -1574,6 +1731,27 @@ unsigned getConnectedCluster(std::vector<Cluster> &clusters, unsigned refCluster
 	}
 
 	return clusters.size();
+}
+
+
+Cloud::Ptr getRefBox(std::vector<Bar> bars, unsigned clusterId)
+{
+	for (unsigned i = 0; i < bars.size(); ++i)
+	{
+		for (unsigned m = 0; m < bars[i].listModel.size(); ++m)
+		{
+			if (bars[i].listModel[m].clusterId != clusterId)
+				continue;
+
+			if (bars[i].listModel[m].aligned)
+				continue;
+
+			if (bars[i].listModel[m].box->points.size())
+				return bars[i].listModel[m].box;
+		}
+	}
+
+	return Cloud::Ptr(new Cloud);
 }
 
 Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist, float threshold, int minNumInliers, int maxNumOutliers, float maxCos)
@@ -1693,7 +1871,7 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 		//p7 = addxy(p5, k1);
 		//p8 = addxy(p6, k1);
 
-#if 0
+#if 1
 		printf("p1:%f %f %f\n", p1.x, p1.y, p1.z);
 		printf("p2:%f %f %f\n", p2.x, p2.y, p2.z);
 		printf("p3:%f %f %f\n", p3.x, p3.y, p3.z);
@@ -2431,9 +2609,9 @@ int main (int argc, char** argv)
 		std::vector<Point> boxRef = fromCloud(cloudRef);
 		std::vector<Point> boxIn = fromCloud(cloudInput);
 
-		std::vector<Point> boxOut = alignBox(boxRef, boxIn);
+		std::vector<std::vector<Point> > boxOut = alignBox(boxRef, boxIn);
 
-		pcl::PolygonMesh::Ptr meshOutput = makeSurface(toCloud(boxOut)); 
+		pcl::PolygonMesh::Ptr meshOutput = makeSurface(toCloud(boxOut[0])); 
 
 		std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
@@ -2490,6 +2668,8 @@ int main (int argc, char** argv)
 		dump(bars, clusters);
 
 		unsigned num = 0;
+
+#if 0
 		for (unsigned b = 0; b < bars.size(); ++b)
 			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
 			{
@@ -2506,7 +2686,7 @@ int main (int argc, char** argv)
 
 				// sanity check
 				printf("volume quota: %f\n", volume(box->points[0], box->points[7]) / cluster.volume());
-				if (volume(box->points[0], box->points[7]) >=	cluster.volume()/2)
+				//if (volume(box->points[0], box->points[7]) >=	cluster.volume()/2)
 				{
 					bars[b].listModel[s].box = box;	
 					printf("... extracted sides\n");
@@ -2515,9 +2695,11 @@ int main (int argc, char** argv)
 				num++;
 			}
 		printf("reconstructed %d of %d clusters\n", num, clusters.size());
+#endif
 
 		dump(bars, clusters);
 
+#if 0
 		for (unsigned b = 0; b < bars.size(); ++b)
 		{
 			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
@@ -2547,7 +2729,9 @@ int main (int argc, char** argv)
 		printf("reconstructed %d of %d clusters\n", num, clusters.size());
 
 		dump(bars, clusters);
+#endif
 
+#if 1
 		for (unsigned b = 0; b < bars.size(); ++b)
 		{
 			Eigen::Vector3f d = Eigen::Vector3f::Zero();
@@ -2576,6 +2760,19 @@ int main (int argc, char** argv)
 			}
 		}
 		printf("reconstructed %d of %d clusters\n", num, clusters.size());
+
+		for (unsigned b = 0; b < bars.size(); ++b)
+			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+			{
+				Model& model = bars[b].listModel[s];
+
+				if (not model.box->points.size())
+					continue;
+				float dist1 = model.getMeanDist(clusters[model.clusterId].cloud);
+				float dist2 = dist1;
+				//float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
+				printf("b:%d s:%d -> %f => %f\n", b, s, dist1, dist2);
+			}
 
 		dump(bars, clusters);
 
@@ -2619,8 +2816,8 @@ int main (int argc, char** argv)
 				Line line2 = bars[b2].lineCenter;
 
 				float dist2 = line1.distance(line2);
-				printf("b1:%d b2:%d distance:%f angle:%f -> %s\n", b1, b2, dist2, line1.d.dot(line2.d), dist2 < 0.06 and line1.d.dot(line2.d) > 0.98 ? "same" : "different");
-				if (dist2 < 0.06 and line1.d.dot(line2.d) > 0.98)
+				printf("b1:%d b2:%d distance:%f angle:%f -> %s\n", b1, b2, dist2, line1.d.dot(line2.d), dist2 < 0.09 and line1.d.dot(line2.d) > 0.98 ? "same" : "different");
+				if (dist2 < 0.09 and line1.d.dot(line2.d) > 0.98)
 				{
 					for (unsigned sliceId = clusters[bars[b1].listModel[bars[b1].listModel.size()-1].clusterId].sliceId+1;
 											 sliceId < clusters[bars[b2].listModel[0].clusterId].sliceId; ++sliceId)
@@ -2651,28 +2848,52 @@ int main (int argc, char** argv)
 			if (not bars[b].listModel.size())
 				continue;
 
-			unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[bars[b].listModel.size()-1].clusterId, clusters[bars[b].listModel[bars[b].listModel.size()-1].clusterId].sliceId+1);
-		
-			if (clusterId == clusters.size())
-				continue;
+			printf("==============================\n");
+			printf("bar:%d start alignment\n", b);
 
-      Model model(clusterId);
-      Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2));
-      model.box = bars[b].listModel[bars[b].listModel.size()-1].cloneSides(d);
-      bars[b].listModel.push_back(model);
-			printf("bar:%d add overlapping cluster:%d\n", b, clusterId);
-		}
-
-		for (unsigned b = 0; b < bars.size(); ++b)
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+			unsigned modelIdxBase = bars[b].listModel.size()-1;
+			for (unsigned sliceOff = 1;; ++sliceOff)
 			{
-				Model& model = bars[b].listModel[s];
+				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
 
-				if (not model.box->points.size())
-					continue;
+				printf("*** clusterId:%d\n", clusterId);	
+				if (clusterId == clusters.size())
+				{
+					printf("bar:%d connected cluster not found\n", b);
+					break;
+				}
 
-				printf("b:%d s:%d -> %f\n", b, s, model.getMeanDist(clusters[model.clusterId].cloud));
+  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
+ 				Cloud::Ptr tgtCloud = bars[b].listModel[modelIdxBase].cloneSides(d);
+				Cloud::Ptr refCloud = getRefBox(bars, clusterId);
+				if (refCloud->points.size())
+				{
+      		std::vector<std::vector<Point> > alignedBoxes = alignBox(fromCloud(refCloud), fromCloud(tgtCloud));
+					for (unsigned i = 0; i < alignedBoxes.size(); ++i)
+					{
+	      		Model model(clusterId);
+						model.box = toCloud(alignedBoxes[i]);
+						model.aligned = true;
+    	  		bars[b].listModel.push_back(model);
+						printf("bar:%d align to overlapping cluster:%d\n", b, clusterId);
+					}
+
+					if (alignedBoxes.size() == 0)
+					{
+						printf("bar:%d finished alignment\n", b);
+						break;
+					}
+				}
+				else
+				{
+					printf("bar:%d reference model not found\n", b);
+					break;
+					//model.box = tgtCloud;
+				}
+
 			}
+		}
+#endif
 
 		dump(bars, clusters);
 
