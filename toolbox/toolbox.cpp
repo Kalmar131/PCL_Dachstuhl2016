@@ -2508,6 +2508,7 @@ int main (int argc, char** argv)
 
 	else if (toolname == "reconstruct-bars")
 	{
+		std::string workflow = argv[argn++];
 		const char* fieldName = argv[argn++];
 		float start = atof(argv[argn++]);
 		float end = atof(argv[argn++]);
@@ -2557,26 +2558,36 @@ int main (int argc, char** argv)
 		dump(bars, clusters);
 
 		unsigned num = 0;
-		num += extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98);
-		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 
-		dump(bars, clusters);
+		if (workflow.find("1") != std::string::npos)
+		{
+			num += extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
 
-		num += cloneModelInsideBar(bars, clusters);
-		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+		if (workflow.find("2") != std::string::npos)
+		{
+			num += cloneModelInsideBar(bars, clusters);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
 
-		dump(bars, clusters);
-
-		num += approximateModel(bars, clusters);
-		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-
-		dump(bars, clusters);
+		if (workflow.find("3") != std::string::npos)
+		{
+			num += approximateModel(bars, clusters);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
 
 		calcLineCenter(bars);
 
-		num += mergeBars(bars, clusters, sliceSize);
-		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-		dump(bars, clusters);
+		if (workflow.find("4") != std::string::npos)
+		{
+			num += mergeBars(bars, clusters, sliceSize);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
 
 		for (unsigned b = 0; b < bars.size(); ++b)
 		{
