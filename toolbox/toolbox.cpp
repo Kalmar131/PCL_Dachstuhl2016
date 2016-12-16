@@ -896,7 +896,7 @@ std::vector<Point> alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt
 		printf("unknown box alignment constellation\n");
 	}
 
-	printf("out-size: %d\n", boxOut.size());
+	printf("out-size: %d\n", (unsigned) boxOut.size());
 	return boxOut;
 }
 
@@ -2412,7 +2412,7 @@ int main (int argc, char** argv)
 
 		unsigned num = 0;
 		num = extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98);
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
+		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 
 		dump(bars, clusters);
 
@@ -2442,7 +2442,7 @@ int main (int argc, char** argv)
 				}
 			}
 		}
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
+		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 
 		dump(bars, clusters);
 
@@ -2473,7 +2473,7 @@ int main (int argc, char** argv)
 				}
 			}
 		}
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
+		printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 
 		dump(bars, clusters);
 
