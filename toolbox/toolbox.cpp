@@ -1608,6 +1608,36 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 		return cloudOutput;
 }
 
+unsigned extractSides(std::vector<Bar> bars, std::vector<Cluster> clusters, int numIterations, int minNumInliersFactor, int maxNumOutliersFactor, float maxCos)
+{
+	unsigned num = 0;
+	for (unsigned b = 0; b < bars.size(); ++b)
+		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+		{
+			printf("extract sides of cluster at:%d\n", bars[b].listModel[s].clusterId);
+
+			Cluster& cluster = clusters[bars[b].listModel[s].clusterId];
+			Cloud::Ptr cloud = cluster.cloud;
+			Point min = cluster.minmax->points[0];
+			Point max = cluster.minmax->points[1];
+			Cloud::Ptr box = extractSides(cloud, numIterations, (max.x-min.x)/3, (max.x-min.x)/20, cloud->points.size()*minNumInliersFactor, cloud->points.size()*maxNumOutliersFactor, maxCos);
+
+			if (not box->points.size())
+				continue;
+
+			// sanity check
+			printf("volume quota: %f\n", volume(box->points[0], box->points[7]) / cluster.volume());
+			if (volume(box->points[0], box->points[7]) >=	cluster.volume()/2)
+			{
+				bars[b].listModel[s].box = box;	
+				printf("... extracted sides\n");
+			}
+
+			num++;
+		}
+
+	return num;
+}
 
 //----------------------------------------------------------------
 
@@ -2381,30 +2411,7 @@ int main (int argc, char** argv)
 		dump(bars, clusters);
 
 		unsigned num = 0;
-		for (unsigned b = 0; b < bars.size(); ++b)
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				printf("extract sides of cluster at:%d\n", bars[b].listModel[s].clusterId);
-
-				Cluster& cluster = clusters[bars[b].listModel[s].clusterId];
-				Cloud::Ptr cloud = cluster.cloud;
-				Point min = cluster.minmax->points[0];
-				Point max = cluster.minmax->points[1];
-				Cloud::Ptr box = extractSides(cloud, numRansacIterations, (max.x-min.x)/3, (max.x-min.x)/20, cloud->points.size()*minNumInliersFactor, cloud->points.size()*maxNumOutliersFactor, 0.98);
-
-				if (not box->points.size())
-					continue;
-
-				// sanity check
-				printf("volume quota: %f\n", volume(box->points[0], box->points[7]) / cluster.volume());
-				if (volume(box->points[0], box->points[7]) >=	cluster.volume()/2)
-				{
-					bars[b].listModel[s].box = box;	
-					printf("... extracted sides\n");
-				}
-
-				num++;
-			}
+		num = extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98);
 		printf("reconstructed %d of %d clusters\n", num, clusters.size());
 
 		dump(bars, clusters);
