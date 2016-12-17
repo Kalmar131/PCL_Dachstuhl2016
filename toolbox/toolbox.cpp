@@ -208,16 +208,16 @@ struct Cluster
 			return ::volume(minmax->points[0], minmax->points[1]);
 		}
 
-		bool overlapsWith(const Cluster& o)
+		bool overlapsWith(const Cluster& o, Eigen::Vector3f d = Eigen::Vector3f::Zero())
 		{
-			return ((minmax->points[0].x >= o.minmax->points[0].x and minmax->points[0].x <= o.minmax->points[1].x) or
-					 (minmax->points[1].x >= o.minmax->points[0].x and minmax->points[1].x <= o.minmax->points[1].x) or
-					 (minmax->points[0].x >= o.minmax->points[0].x and minmax->points[1].x <= o.minmax->points[1].x) or
-					 (minmax->points[0].x <= o.minmax->points[0].x and minmax->points[1].x >= o.minmax->points[1].x)) and
-				((minmax->points[0].y >= o.minmax->points[0].y and minmax->points[0].y <= o.minmax->points[1].y) or
-					 (minmax->points[1].y >= o.minmax->points[0].y and minmax->points[1].y <= o.minmax->points[1].y) or
-					 (minmax->points[0].y >= o.minmax->points[0].y and minmax->points[1].y <= o.minmax->points[1].y) or
-					 (minmax->points[0].y <= o.minmax->points[0].y and minmax->points[1].y >= o.minmax->points[1].y));
+			return ((minmax->points[0].x >= o.minmax->points[0].x + d(0) and minmax->points[0].x <= o.minmax->points[1].x + d(0)) or
+					 (minmax->points[1].x >= o.minmax->points[0].x + d(0) and minmax->points[1].x <= o.minmax->points[1].x + d(0)) or
+					 (minmax->points[0].x >= o.minmax->points[0].x + d(0) and minmax->points[1].x <= o.minmax->points[1].x + d(0)) or
+					 (minmax->points[0].x <= o.minmax->points[0].x + d(0) and minmax->points[1].x >= o.minmax->points[1].x + d(0))) and
+				((minmax->points[0].y >= o.minmax->points[0].y + d(1) and minmax->points[0].y <= o.minmax->points[1].y + d(1)) or
+					 (minmax->points[1].y >= o.minmax->points[0].y + d(1) and minmax->points[1].y <= o.minmax->points[1].y + d(1)) or
+					 (minmax->points[0].y >= o.minmax->points[0].y + d(1) and minmax->points[1].y <= o.minmax->points[1].y + d(1)) or
+					 (minmax->points[0].y <= o.minmax->points[0].y + d(1) and minmax->points[1].y >= o.minmax->points[1].y + d(1)));
 
 		}
 };
@@ -1386,16 +1386,23 @@ Network extractNetwork(std::vector<Cluster>& clusters, float thresholdVolume)
 				if (clusters[base].sliceId != clusters[ref].sliceId-1)
 					continue;
 
-				if (clusters[base].overlapsWith(clusters[ref]))
-					std::cout << ".. overlap base:" << base << " ref:" << ref << " volume diff:" << ::fabs(clusters[base].volume() - clusters[ref].volume()) << std::endl;
+				if (not clusters[base].overlapsWith(clusters[ref]))
+					continue;
+
+					std::cout << ".. base:" << base << " ref:" << ref << " overlaps with volume diff:" << ::fabs(clusters[base].volume() - clusters[ref].volume()) << std::endl;
 
 				// if the volume is similar then an cluster are connected then there is a connection between the cluster
-				if (::fabs(clusters[base].volume() - clusters[ref].volume()) < thresholdVolume and
-					clusters[base].overlapsWith(clusters[ref]))
-				{
-					std::cerr << ".. add connection: " << base << " " << ref << std::endl;
-					network.push_back(std::pair<unsigned, unsigned>(base, ref));
-				}
+				if (::fabs(clusters[base].volume() - clusters[ref].volume()) > thresholdVolume)
+					continue;
+
+				if (::fabs((clusters[base].minmax->points[1].x-clusters[base].minmax->points[0].x) - (clusters[ref].minmax->points[1].x-clusters[ref].minmax->points[0].x)) > 0.1)
+					continue;
+
+				if (::fabs((clusters[base].minmax->points[1].y-clusters[base].minmax->points[0].y) - (clusters[ref].minmax->points[1].y-clusters[ref].minmax->points[0].y)) > 0.1)
+					continue;
+
+				std::cerr << ".. add connection: " << base << " " << ref << std::endl;
+				network.push_back(std::pair<unsigned, unsigned>(base, ref));
 			}
 		}
  
@@ -1457,14 +1464,14 @@ Cloud::Ptr splitCloud(Cloud::Ptr cloud, Cloud::Ptr minmax)
 }
 
 
-unsigned getConnectedCluster(std::vector<Cluster> &clusters, unsigned refClusterId, unsigned sliceId)
+unsigned getConnectedCluster(std::vector<Cluster> &clusters, unsigned refClusterId, Eigen::Vector3f d, unsigned sliceId)
 {
 	for (unsigned base = 0; base < clusters.size(); ++base)
 	{
 		if (clusters[base].sliceId != sliceId)
 			continue;
 
-		if (clusters[base].overlapsWith(clusters[refClusterId]))
+		if (clusters[base].overlapsWith(clusters[refClusterId], d))
 		{
 			return base;
 		}
@@ -1729,7 +1736,7 @@ unsigned approximateModels(std::vector<Bar>& bars, std::vector<Cluster>& cluster
 			if (model.box->points.size() == 0)
 			{
 				model.approximateSides(clusters[model.clusterId].minmax, -d);
-				printf(".. .. approximated model for cluster %d\n", bars[b].listModel[s].clusterId);
+				printf(".. .. bar:%d approximated model for cluster %d\n", b, bars[b].listModel[s].clusterId);
 				num++;
 			}
 		}
@@ -1803,7 +1810,7 @@ unsigned mergeBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 			Line line2 = bars[b2].lineCenter;
 
 			float dist = line1.distance(line2);
-			float angle = bars[b1].lineCenter.d(2)*bars[b2].lineCenter.d;
+			float angle = line1.d.dot(line2.d);
 			printf(".. bar1:%d bar2:%d -> distance:%f angle:%f\n", b1, b2, dist, angle);
 
 			if (dist < maxDist and angle > minAngle)
@@ -1812,7 +1819,7 @@ unsigned mergeBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 				for (unsigned sliceId = clusters[bars[b1].listModel[bars[b1].listModel.size()-1].clusterId].sliceId+1;
 						sliceId < clusters[bars[b2].listModel[0].clusterId].sliceId; ++sliceId)
 				{
-					unsigned clusterId = getConnectedCluster(clusters, bars[b1].listModel[bars[b1].listModel.size()-1].clusterId, sliceId);
+					unsigned clusterId = getConnectedCluster(clusters, bars[b1].listModel[bars[b1].listModel.size()-1].clusterId, Eigen::Vector3f::Zero(), sliceId);
 					if (clusterId < clusters.size())
 					{
 						Model model(clusterId);
@@ -1844,12 +1851,15 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 			if (not bars[b].listModel.size())
 				continue;
 
+			printf("+++++++++++++++++++++++++++\n");
 			printf(".. bar:%d start alignment\n", b);
 
 			unsigned modelIdxBase = bars[b].listModel.size()-1;
 			for (unsigned sliceOff = 1;; ++sliceOff)
 			{
-				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
+  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
+
+				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, d, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
 
 				if (clusterId == clusters.size())
 				{
@@ -1859,7 +1869,6 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 				else
 					printf(".. .. bar:%d connected cluster:%d\n", b, clusterId);	
 
-  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
  				Cloud::Ptr tgtCloud = bars[b].listModel[modelIdxBase].cloneSides(d);
 				Cloud::Ptr refCloud = getRefBox(bars, clusterId);
 				if (refCloud->points.size())
@@ -1884,8 +1893,10 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 				else
 				{
 					printf(".. .. bar:%d reference model not found\n", b);
-					break;
-					//model.box = tgtCloud;
+
+	      	Model model(clusterId);
+					model.box = tgtCloud;
+    	  	bars[b].listModel.push_back(model);
 				}
 
 			}
@@ -2440,8 +2451,22 @@ int main (int argc, char** argv)
 				cluster.sliceId = i;
 				cluster.cloud = listCloud[c];
 				cluster.minmax = getMinMax(listCloud[c]);
-				clusters.push_back(cluster);
-				std::cout << "cluster:" << clusters.size()-1 << " points:" << listCloud[c]->points.size() << std::endl;
+
+				bool merged = false;
+				for (unsigned j = 0; j < clusters.size(); ++j)
+					if (cluster.overlapsWith(clusters[j]) and i == clusters[j].sliceId)
+					{
+						printf("two clusters in same slice overlapping ... merge\n");
+						*clusters[j].cloud += *listCloud[c];
+						merged = true;
+						break;
+					}
+
+				if (not merged)
+				{
+					clusters.push_back(cluster);
+					std::cout << "cluster:" << clusters.size()-1 << " points:" << listCloud[c]->points.size() << std::endl;
+				}
 			}
 		}
 
@@ -2483,11 +2508,11 @@ int main (int argc, char** argv)
 		if (workflow.find("4") != std::string::npos)
 		{
 			printf("========================================\n");
-			printf("approxamte models\n");
+			printf("approximate models\n");
 			num += approximateModels(bars, clusters);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
-			saveBars(bars, createFilename(outFilename, 4), barFilename);
+			saveBars(bars, createFilename(outFilename, 4), barFilename, true);
 		}
 
 		calcLineCenter(bars);
