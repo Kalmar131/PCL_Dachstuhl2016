@@ -1871,7 +1871,7 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 		//p7 = addxy(p5, k1);
 		//p8 = addxy(p6, k1);
 
-#if 1
+#if 0
 		printf("p1:%f %f %f\n", p1.x, p1.y, p1.z);
 		printf("p2:%f %f %f\n", p2.x, p2.y, p2.z);
 		printf("p3:%f %f %f\n", p3.x, p3.y, p3.z);
@@ -1895,6 +1895,261 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 		return cloudOutput;
 }
 
+unsigned extractSides(std::vector<Bar>& bars, std::vector<Cluster>& clusters, unsigned numIterations, float minNumInliersFactor, float maxNumOutliersFactor, float maxCos, float volumeRatio)
+{
+	unsigned num = 0;
+
+	for (unsigned b = 0; b < bars.size(); ++b)
+		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+		{
+			printf("extract sides of cluster at:%d\n", bars[b].listModel[s].clusterId);
+
+			Cluster& cluster = clusters[bars[b].listModel[s].clusterId];
+			Cloud::Ptr cloud = cluster.cloud;
+			Point min = cluster.minmax->points[0];
+			Point max = cluster.minmax->points[1];
+			Cloud::Ptr box = extractSides(cloud, numIterations, (max.x-min.x)/3, (max.x-min.x)/20, cloud->points.size()*minNumInliersFactor, cloud->points.size()*maxNumOutliersFactor, maxCos);
+
+			if (not box->points.size())
+				continue;
+
+			// sanity check
+			//printf("volumes: %f %f\n", volume(box->points[0], box->points[6]), cluster.volume());
+			if (volume(box->points[0], box->points[6]) >=	cluster.volume()*volumeRatio)
+			{
+				bars[b].listModel[s].box = box;	
+				printf(".. .. extracted sides for model\n");
+			}
+
+			num++;
+		}
+
+	return num;
+}
+
+unsigned cloneModelInsideBar(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+{
+	unsigned num = 0;
+
+	for (unsigned b = 0; b < bars.size(); ++b)
+	{
+		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+		{
+			Model& modelCurr = bars[b].listModel[s];
+			Model& modelPrev = bars[b].listModel[s > 0 ? s-1 : s];
+			if (modelCurr.box->points.size() == 0 and modelPrev.box->points.size() > 0)
+			{
+				modelCurr.box = modelPrev.move(distance(clusters[modelCurr.clusterId].minmax, clusters[modelPrev.clusterId].minmax));
+				num++;
+				printf(".. .. cloned model from cluster %d to cluster %d\n", bars[b].listModel[s-1].clusterId, bars[b].listModel[s].clusterId);
+			}
+		}
+
+		for (int s = bars[b].listModel.size()-1; s >= 0; --s)
+		{
+			Model& modelCurr = bars[b].listModel[s];
+			Model& modelPrev = bars[b].listModel[s < bars[b].listModel.size()-1 ? s+1 : s];
+			if (modelCurr.box->points.size() == 0 and modelPrev.box->points.size() > 0)
+			{
+				modelCurr.box = modelPrev.move(distance(clusters[modelCurr.clusterId].minmax, clusters[modelPrev.clusterId].minmax));
+				num++;
+				printf(".. .. cloned model from cluster %d to cluster %d\n", bars[b].listModel[s+1].clusterId, bars[b].listModel[s].clusterId);
+			}
+		}
+	}
+
+	return num;
+}
+
+unsigned approximateModel(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+{
+	unsigned num = 0;
+
+	for (unsigned b = 0; b < bars.size(); ++b)
+	{
+		Eigen::Vector3f d = Eigen::Vector3f::Zero();
+
+		for (unsigned s = 1; s < bars[b].listModel.size(); ++s)
+		{
+			Cluster& clusterCurr = clusters[bars[b].listModel[s].clusterId];
+			Cluster& clusterPrev = clusters[bars[b].listModel[s-1].clusterId];
+
+			d += toVec(clusterCurr.minmax->points[0]) - toVec(clusterPrev.minmax->points[0]);
+			d += toVec(clusterCurr.minmax->points[1]) - toVec(clusterPrev.minmax->points[1]);
+		}
+
+		d /= (bars[b].listModel.size()-1)*2;
+
+		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+		{
+			Model& model = bars[b].listModel[s];
+
+			if (model.box->points.size() == 0)
+			{
+				model.approximateSides(clusters[model.clusterId].minmax, -d);
+				printf(".. .. approximated model for cluster %d\n", bars[b].listModel[s].clusterId);
+				num++;
+			}
+		}
+	}
+
+	return num;
+}
+
+void calcLineCenter(std::vector<Bar>& bars)
+{
+	for (unsigned b = 0; b < bars.size(); ++b)
+	{
+		Line line;
+		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+		{
+			Cloud::Ptr box = bars[b].listModel[s].box;
+			if (not box->points.size())
+				continue;
+
+			line.p += toVec(box->points[0] + box->points[4]);
+			line.p += toVec(box->points[1] + box->points[5]);
+			line.p += toVec(box->points[2] + box->points[6]);
+			line.p += toVec(box->points[3] + box->points[7]);
+
+			line.d += toVec(box->points[0] - box->points[4]);
+			line.d += toVec(box->points[1] - box->points[5]);
+			line.d += toVec(box->points[2] - box->points[6]);
+			line.d += toVec(box->points[3] - box->points[7]);
+		}
+
+		line.p /= (bars[b].listModel.size()*8);
+		line.d /= length(line.d);
+
+		bars[b].lineCenter = line;
+		printf("p:%f,%f,%f d:%f %f %f\n", line.p(0), line.p(1), line.p(2),  line.d(0), line.d(1), line.d(2));
+	}
+}
+
+void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+{
+		for (unsigned b = 0; b < bars.size(); ++b)
+			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+			{
+				Model& model = bars[b].listModel[s];
+
+				if (not model.box->points.size())
+					continue;
+
+				float dist1 = model.getMeanDist(clusters[model.clusterId].cloud);
+				float dist2 = dist1;
+				//float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
+
+				printf(".. b:%d s:%d -> %f => %f\n", b, s, dist1, dist2);
+			}
+}
+
+unsigned mergeBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float sliceSize, float maxDist, float minAngle)
+{
+	unsigned num = 0;
+
+	for (unsigned b1 = 0; b1 < bars.size(); ++b1)
+		for (unsigned b2 = b1+1; b2 < bars.size(); ++b2)
+		{
+			if (not bars[b1].listModel.size())
+				continue;
+
+			if (not bars[b2].listModel.size())
+				continue;
+
+			Line line1 = bars[b1].lineCenter;
+			Line line2 = bars[b2].lineCenter;
+
+			float dist = line1.distance(line2);
+			float angle = bars[b1].lineCenter.d(2);
+			printf(".. b1:%d b2:%d -> distance:%f angle:%f\n", b1, b2, dist, angle);
+
+			if (dist < maxDist and angle > minAngle)
+			{
+				printf(".. merge");
+				for (unsigned sliceId = clusters[bars[b1].listModel[bars[b1].listModel.size()-1].clusterId].sliceId+1;
+						sliceId < clusters[bars[b2].listModel[0].clusterId].sliceId; ++sliceId)
+				{
+					unsigned clusterId = getConnectedCluster(clusters, bars[b1].listModel[bars[b1].listModel.size()-1].clusterId, sliceId);
+					if (clusterId < clusters.size())
+					{
+						Model model(clusterId);
+						Eigen::Vector3f d = bars[b1].lineCenter.d*(sliceSize/bars[b1].lineCenter.d(2));
+						model.box = bars[b1].listModel[bars[b1].listModel.size()-1].cloneSides(d);
+						bars[b1].listModel.push_back(model);
+						printf(".. .. added model for connected cluster:%d\n", bars[b1].listModel[bars[b1].listModel.size()-1].clusterId);
+						num++;
+					}
+				}
+
+				for (unsigned i = 0; i < bars[b2].listModel.size(); ++i)
+				{
+					bars[b1].listModel.push_back(Model(bars[b2].listModel[i]));
+				}
+				bars[b2].listModel.clear();
+			}
+		}
+
+	return num;
+}
+
+unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float sliceSize)
+{
+	unsigned num = 0;
+
+		for (unsigned b = 0; b < bars.size(); ++b)
+		{
+			if (not bars[b].listModel.size())
+				continue;
+
+			printf("==============================\n");
+			printf("bar:%d start alignment\n", b);
+
+			unsigned modelIdxBase = bars[b].listModel.size()-1;
+			for (unsigned sliceOff = 1;; ++sliceOff)
+			{
+				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
+
+				printf("*** clusterId:%d\n", clusterId);	
+				if (clusterId == clusters.size())
+				{
+					printf("bar:%d connected cluster not found\n", b);
+					break;
+				}
+
+  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
+ 				Cloud::Ptr tgtCloud = bars[b].listModel[modelIdxBase].cloneSides(d);
+				Cloud::Ptr refCloud = getRefBox(bars, clusterId);
+				if (refCloud->points.size())
+				{
+      		std::vector<std::vector<Point> > alignedBoxes = alignBox(fromCloud(refCloud), fromCloud(tgtCloud));
+					for (unsigned i = 0; i < alignedBoxes.size(); ++i)
+					{
+	      		Model model(clusterId);
+						model.box = toCloud(alignedBoxes[i]);
+						model.aligned = true;
+    	  		bars[b].listModel.push_back(model);
+						printf("bar:%d align to overlapping cluster:%d\n", b, clusterId);
+					}
+
+					if (alignedBoxes.size() == 0)
+					{
+						printf("bar:%d finished alignment\n", b);
+						break;
+					}
+				}
+				else
+				{
+					printf("bar:%d reference model not found\n", b);
+					break;
+					//model.box = tgtCloud;
+				}
+
+			}
+		}
+
+	return num;
+}
 
 //----------------------------------------------------------------
 
@@ -2509,65 +2764,6 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *meshOutput);
 	}
 
-	else if (toolname == "extract-bars")
-	{
-		const char* fieldName = argv[argn++];
-		float start = atof(argv[argn++]);
-		float end = atof(argv[argn++]);
-		int numSlices = atoi(argv[argn++]);
-		float clusterTolerance = atof(argv[argn++]);
-		int minClusterSize = atoi(argv[argn++]);
-		int maxClusterSize = atoi(argv[argn++]);
-		float thresholdVolume = atof(argv[argn++]);
-		const char* inFilename = argv[argn++];
-		const char* outFilename = argv[argn++];
-
-		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
-
-		pcl::io::loadPLYFile(inFilename, *cloudInput);
-		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
-
-		std::vector<Cluster> clusters;
-
-		for (unsigned i = 0; i < numSlices; ++i)
-		{
-			float min = start + (end-start)/numSlices * (i+0);
-			float max = start + (end-start)/numSlices * (i+1);
-			Cloud::Ptr slice = passThrough(cloudInput, fieldName, min, max);
-			std::cout << "slice:" << i << std::endl;
-
-			std::vector<Cloud::Ptr> listCluster = euclidianClustering(slice, clusterTolerance, minClusterSize, maxClusterSize);
-
-			for (unsigned c = 0; c < listCluster.size(); ++c)
-			{
-				Cluster cluster;
-				cluster.sliceId = i;
-				cluster.cloud = listCluster[c];
-				cluster.minmax = getMinMax(listCluster[c]);
-				clusters.push_back(cluster);
-				std::cout << "cluster:" << clusters.size()-1 << " points:" << listCluster[c]->points.size() << std::endl;
-			}
-		}
-
-		Network network = extractNetwork(clusters, thresholdVolume);
-		std::vector<Bar> bars = extractBars(network);
-
-		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
-		Edges edgesOutput;
-
-		for (unsigned b = 0; b < bars.size(); ++b)
-		{
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Cloud::Ptr cloudBox = getBoundingBox(clusters[bars[b].listModel[s].clusterId].cloud);
-				Edges edgesBox = createEdgesForBox();
-				merge(cloudOutput, edgesOutput, cloudBox, edgesBox);
-			}
-		}
-
-		std::cerr << "Output Cloud with Edges: " << outFilename << " Size: " << cloudOutput->points.size() << " Edges: " << edgesOutput.size() << std::endl;
-		savePLYEdges(outFilename, cloudOutput, edgesOutput);
-	}
 
 	else if (toolname == "extract-sides")
 	{
@@ -2619,6 +2815,7 @@ int main (int argc, char** argv)
 
 	else if (toolname == "reconstruct-bars")
 	{
+		std::string workflow = argv[argn++];
 		const char* fieldName = argv[argn++];
 		float start = atof(argv[argn++]);
 		float end = atof(argv[argn++]);
@@ -2649,16 +2846,16 @@ int main (int argc, char** argv)
 			Cloud::Ptr slice = passThrough(cloudInput, fieldName, min, max);
 			std::cout << "slice:" << i << std::endl;
 
-			std::vector<Cloud::Ptr> listCluster = euclidianClustering(slice, clusterTolerance, minClusterSize, maxClusterSize);
+			std::vector<Cloud::Ptr> listCloud = euclidianClustering(slice, clusterTolerance, minClusterSize, maxClusterSize);
 
-			for (unsigned c = 0; c < listCluster.size(); ++c)
+			for (unsigned c = 0; c < listCloud.size(); ++c)
 			{
 				Cluster cluster;
 				cluster.sliceId = i;
-				cluster.cloud = listCluster[c];
-				cluster.minmax = getMinMax(listCluster[c]);
+				cluster.cloud = listCloud[c];
+				cluster.minmax = getMinMax(listCloud[c]);
 				clusters.push_back(cluster);
-				std::cout << "cluster:" << clusters.size()-1 << " points:" << listCluster[c]->points.size() << std::endl;
+				std::cout << "cluster:" << clusters.size()-1 << " points:" << listCloud[c]->points.size() << std::endl;
 			}
 		}
 
@@ -2669,233 +2866,48 @@ int main (int argc, char** argv)
 
 		unsigned num = 0;
 
-#if 0
-		for (unsigned b = 0; b < bars.size(); ++b)
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				printf("extract sides of cluster at:%d\n", bars[b].listModel[s].clusterId);
-
-				Cluster& cluster = clusters[bars[b].listModel[s].clusterId];
-				Cloud::Ptr cloud = cluster.cloud;
-				Point min = cluster.minmax->points[0];
-				Point max = cluster.minmax->points[1];
-				Cloud::Ptr box = extractSides(cloud, numRansacIterations, (max.x-min.x)/3, (max.x-min.x)/20, cloud->points.size()*minNumInliersFactor, cloud->points.size()*maxNumOutliersFactor, 0.98);
-
-				if (not box->points.size())
-					continue;
-
-				// sanity check
-				printf("volume quota: %f\n", volume(box->points[0], box->points[7]) / cluster.volume());
-				//if (volume(box->points[0], box->points[7]) >=	cluster.volume()/2)
-				{
-					bars[b].listModel[s].box = box;	
-					printf("... extracted sides\n");
-				}
-
-				num++;
-			}
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
-#endif
-
-		dump(bars, clusters);
-
-#if 0
-		for (unsigned b = 0; b < bars.size(); ++b)
+		if (workflow.find("1") != std::string::npos)
 		{
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Model& modelCurr = bars[b].listModel[s];
-				Model& modelPrev = bars[b].listModel[s > 0 ? s-1 : s];
-				if (modelCurr.box->points.size() == 0 and modelPrev.box->points.size() > 0)
-				{
-					modelCurr.box = modelPrev.move(distance(clusters[modelCurr.clusterId].minmax, clusters[modelPrev.clusterId].minmax));
-					num++;
-					printf("cloned cluster %d to cluster %d\n", bars[b].listModel[s-1].clusterId, bars[b].listModel[s].clusterId);
-				}
-			}
-
-			for (int s = bars[b].listModel.size()-1; s >= 0; --s)
-			{
-				Model& modelCurr = bars[b].listModel[s];
-				Model& modelPrev = bars[b].listModel[s < bars[b].listModel.size()-1 ? s+1 : s];
-				if (modelCurr.box->points.size() == 0 and modelPrev.box->points.size() > 0)
-				{
-					modelCurr.box = modelPrev.move(distance(clusters[modelCurr.clusterId].minmax, clusters[modelPrev.clusterId].minmax));
-					num++;
-					printf("cloned cluster %d to cluster %d\n", bars[b].listModel[s+1].clusterId, bars[b].listModel[s].clusterId);
-				}
-			}
-		}
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
-
-		dump(bars, clusters);
-#endif
-
-#if 1
-		for (unsigned b = 0; b < bars.size(); ++b)
-		{
-			Eigen::Vector3f d = Eigen::Vector3f::Zero();
-
-			for (unsigned s = 1; s < bars[b].listModel.size(); ++s)
-			{
-				Cluster& clusterCurr = clusters[bars[b].listModel[s].clusterId];
-				Cluster& clusterPrev = clusters[bars[b].listModel[s-1].clusterId];
-
-				d += toVec(clusterCurr.minmax->points[0]) - toVec(clusterPrev.minmax->points[0]);
-				d += toVec(clusterCurr.minmax->points[1]) - toVec(clusterPrev.minmax->points[1]);
-			}
-
-			d /= (bars[b].listModel.size()-1)*2;
-
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Model& model = bars[b].listModel[s];
-
-				if (model.box->points.size() == 0)
-				{
-					model.approximateSides(clusters[model.clusterId].minmax, -d);
-					printf("approximated cluster %d\n", bars[b].listModel[s].clusterId);
-					num++;
-				}
-			}
-		}
-		printf("reconstructed %d of %d clusters\n", num, clusters.size());
-
-		for (unsigned b = 0; b < bars.size(); ++b)
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Model& model = bars[b].listModel[s];
-
-				if (not model.box->points.size())
-					continue;
-				float dist1 = model.getMeanDist(clusters[model.clusterId].cloud);
-				float dist2 = dist1;
-				//float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
-				printf("b:%d s:%d -> %f => %f\n", b, s, dist1, dist2);
-			}
-
-		dump(bars, clusters);
-
-		for (unsigned b = 0; b < bars.size(); ++b)
-		{
-			Line line;
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Cloud::Ptr box = bars[b].listModel[s].box;
-				if (not box->points.size())
-					continue;
-
-				line.p += toVec(box->points[0] + box->points[4]);
-				line.p += toVec(box->points[1] + box->points[5]);
-				line.p += toVec(box->points[2] + box->points[6]);
-				line.p += toVec(box->points[3] + box->points[7]);
-
-				line.d += toVec(box->points[0] - box->points[4]);
-				line.d += toVec(box->points[1] - box->points[5]);
-				line.d += toVec(box->points[2] - box->points[6]);
-				line.d += toVec(box->points[3] - box->points[7]);
-			}
-
-			line.p /= (bars[b].listModel.size()*8);
-			line.d /= length(line.d);
-	
-			bars[b].lineCenter = line;
-			printf("p:%f,%f,%f d:%f %f %f\n", line.p(0), line.p(1), line.p(2),  line.d(0), line.d(1), line.d(2));
+			num += extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98, 0.5);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
 		}
 
-		for (unsigned b1 = 0; b1 < bars.size(); ++b1)
-			for (unsigned b2 = b1+1; b2 < bars.size(); ++b2)
-			{
-				if (not bars[b1].listModel.size())
-					continue;
-
-				if (not bars[b2].listModel.size())
-					continue;
-
-				Line line1 = bars[b1].lineCenter;
-				Line line2 = bars[b2].lineCenter;
-
-				float dist2 = line1.distance(line2);
-				printf("b1:%d b2:%d distance:%f angle:%f -> %s\n", b1, b2, dist2, line1.d.dot(line2.d), dist2 < 0.09 and line1.d.dot(line2.d) > 0.98 ? "same" : "different");
-				if (dist2 < 0.09 and line1.d.dot(line2.d) > 0.98)
-				{
-					for (unsigned sliceId = clusters[bars[b1].listModel[bars[b1].listModel.size()-1].clusterId].sliceId+1;
-											 sliceId < clusters[bars[b2].listModel[0].clusterId].sliceId; ++sliceId)
-					{
-						unsigned clusterId = getConnectedCluster(clusters, bars[b1].listModel[bars[b1].listModel.size()-1].clusterId, sliceId);
-						if (clusterId < clusters.size())
-						{
-							Model model(clusterId);
-							Eigen::Vector3f d = bars[b1].lineCenter.d*(sliceSize/bars[b1].lineCenter.d(2));
-							model.box = bars[b1].listModel[bars[b1].listModel.size()-1].cloneSides(d);
-							bars[b1].listModel.push_back(model);
-							printf("add connected cluster:%d\n", bars[b1].listModel[bars[b1].listModel.size()-1].clusterId);
-						}
-					}
-
-					for (unsigned i = 0; i < bars[b2].listModel.size(); ++i)
-					{
-						bars[b1].listModel.push_back(Model(bars[b2].listModel[i]));
-					}
-					bars[b2].listModel.clear();
-				}
-			}
-
-		dump(bars, clusters);
-
-		for (unsigned b = 0; b < bars.size(); ++b)
+		if (workflow.find("2") != std::string::npos)
 		{
-			if (not bars[b].listModel.size())
-				continue;
-
-			printf("==============================\n");
-			printf("bar:%d start alignment\n", b);
-
-			unsigned modelIdxBase = bars[b].listModel.size()-1;
-			for (unsigned sliceOff = 1;; ++sliceOff)
-			{
-				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
-
-				printf("*** clusterId:%d\n", clusterId);	
-				if (clusterId == clusters.size())
-				{
-					printf("bar:%d connected cluster not found\n", b);
-					break;
-				}
-
-  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
- 				Cloud::Ptr tgtCloud = bars[b].listModel[modelIdxBase].cloneSides(d);
-				Cloud::Ptr refCloud = getRefBox(bars, clusterId);
-				if (refCloud->points.size())
-				{
-      		std::vector<std::vector<Point> > alignedBoxes = alignBox(fromCloud(refCloud), fromCloud(tgtCloud));
-					for (unsigned i = 0; i < alignedBoxes.size(); ++i)
-					{
-	      		Model model(clusterId);
-						model.box = toCloud(alignedBoxes[i]);
-						model.aligned = true;
-    	  		bars[b].listModel.push_back(model);
-						printf("bar:%d align to overlapping cluster:%d\n", b, clusterId);
-					}
-
-					if (alignedBoxes.size() == 0)
-					{
-						printf("bar:%d finished alignment\n", b);
-						break;
-					}
-				}
-				else
-				{
-					printf("bar:%d reference model not found\n", b);
-					break;
-					//model.box = tgtCloud;
-				}
-
-			}
+			num += cloneModelInsideBar(bars, clusters);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
 		}
-#endif
 
-		dump(bars, clusters);
+		if (workflow.find("3") != std::string::npos)
+		{
+			fitModels(bars, clusters);
+		}
+
+		if (workflow.find("4") != std::string::npos)
+		{
+			num += approximateModel(bars, clusters);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
+
+		calcLineCenter(bars);
+
+		if (workflow.find("5") != std::string::npos)
+		{
+			num += mergeBars(bars, clusters, sliceSize, 0.09, 0.98);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
+
+		if (workflow.find("6") != std::string::npos)
+		{
+			num += alignBars(bars, clusters, sliceSize);
+			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			dump(bars, clusters);
+		}
+
 
 		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
 		Edges edgesOutput;
