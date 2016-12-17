@@ -27,216 +27,34 @@
 #include <pcl/surface/concave_hull.h>
 #include <pcl/surface/convex_hull.h>
 #include <pcl/surface/mls.h>
-#include <pcl/visualization/pcl_visualizer.h>
 
-typedef pcl::PointXYZ Point;
-typedef pcl::PointCloud<Point> Cloud;
+#include "helpers.h"
 
-Cloud::Ptr toCloud(std::vector<Point> pointList)
+//----------------------------------------------------------------
+
+int getModelType(std::string modelName)
 {
-	Cloud::Ptr out(new Cloud);
+	int modelType;
 
-	for (unsigned i = 0; i < pointList.size(); ++i)
-		out->points.push_back(pointList[i]);
+	if (modelName == "plane")
+		modelType = pcl::SACMODEL_PLANE;
+	else if (modelName == "line")
+		modelType = pcl::SACMODEL_LINE;
 
-	return out;
+	return modelType;
 }
 
-std::vector<Point> fromCloud(Cloud::Ptr cloud)
+pcl::ModelCoefficients::Ptr loadModelCoeffients(const char* filename)
 {
-	std::vector<Point> out;
-
-  for (unsigned i = 0; i < cloud->points.size(); ++i)
-    out.push_back(cloud->points[i]);
-
-	return out;
+	pcl::ModelCoefficients::Ptr modelCoefficients;
+	return modelCoefficients;
 }
 
-Eigen::Vector3f toVec(Point in)
+void saveModelCoefficients(const char* modelFilename, pcl::ModelCoefficients::Ptr coefficents)
 {
-	Eigen::Vector3f out;
-  
-	out(0) = in.x;
-  out(1) = in.y;
-  out(2) = in.z;
-
-	return out;
-}
-
-Point fromVec(Eigen::Vector3f in)
-{
-	return Point(in(0), in(1), in(2));
-}
-
-Point fromVec(Eigen::Vector4f in)
-{
-	return Point(in(0), in(1), in(2));
-}
-
-
-std::vector<Eigen::Vector3f> toVec(std::vector<Point> in)
-{
-	std::vector<Eigen::Vector3f> out;
-
-	for (unsigned i = 0; i < in.size(); ++i)
-		out.push_back(toVec(in[i]));
-
-	return out;
-}
-
-std::vector<Point> fromVec(std::vector<Eigen::Vector3f> in)
-{
-	std::vector<Point> out;
-
-	for (unsigned i = 0; i < in.size(); ++i)
-		out.push_back(fromVec(in[i]));
-
-	return out;
-}
-
-static Point operator + (Point p1, Point p2)
-{
-	return Point(p1.x+p2.x, p1.y+p2.y, p1.z+p2.z);
-}
-
-static Point operator - (Point p1, Point p2)
-{
-	return Point(p1.x-p2.x, p1.y-p2.y, p1.z-p2.z);
 }
 
 //----------------------------------------------------------------
-// geometry helper
-
-float sqr(Eigen::Vector3f v)
-{
-	return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-}
-
-float length(Eigen::Vector3f v)
-{
-  return ::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
-
-bool isWithin(Point p, Point min, Point max)
-{
-	return (p.x >= min.x and p.x <= max.x) and (p.y >= min.y and p.y <= max.y);
-}
-
-Point addxy(Point p, Eigen::Vector3f v)
-{
-	return Point(p.x+v(0), p.y+v(1), p.z);
-}
-
-Point addx(Point p, Eigen::Vector3f v)
-{
-	return Point(p.x+v(0), p.y, p.z);
-}
-
-Point addy(Point p, Eigen::Vector3f v)
-{
-	return Point(p.x, p.y+v(1), p.z);
-}
-
-
-struct Line
-{
-	Line()
-	: p(Eigen::Vector3f::Zero()), d(Eigen::Vector3f::Zero())
-	{}
-
-	Line(Point p1, Point p2)
-	{
-		p = toVec(p1);
-		d = Eigen::Vector3f(toVec(p2) - toVec(p1));
-	}
-
-	Line(Eigen::Vector3f p0, Eigen::Vector3f p1)
-	{
-		p = p0;
-		d = p1-p0;
-	}
-
-	float distance(Point point)
-	{
-		return length((toVec(point)-p).cross(d))/length(d);
-	}
-
-	float distance(Line line)
-	{
-		return fabs((d.cross(line.d)/length(d.cross(line.d))).dot(p-line.p));
-	}
-
-	Eigen::Vector3f p;
-	Eigen::Vector3f d;
-};
-
-Eigen::Vector3f distance(Cloud::Ptr cloud1, Cloud::Ptr cloud2)
-{
-	Eigen::Vector3f d(Eigen::Vector3f::Zero());
-
-	for (unsigned i = 0; i < cloud1->points.size() and i < cloud2->points.size(); ++i)
-		d += toVec(cloud1->points[i]) - toVec(cloud2->points[i]);
-
-	return d/cloud1->points.size();
-}
-
-
-struct Plane
-{
-	Plane()
-	: p(), n(), d(0)
-	{}
-
-	Plane(Point p1, Point p2, Point p3)
-	{
-		p = toVec(p1);
-		n = (toVec(p2) - toVec(p1)).cross(toVec(p3) - toVec(p1));
-		n = n/length(n);
-		if (p.dot(n) < 0)
-			n = -n;
-		d = n.dot(p);
-	}
-
-	Plane(Eigen::Vector3f p_, Eigen::Vector3f n_)
-	{
-		p = p_;
-		n = n_;
-		n = n/length(n);
-		if (p.dot(n) < 0)
-			n = -n;
-		d = n.dot(p);
-	}
-
-	Line cut(Plane plane)
-	{
-		Line line;
-
-		float b = sqr(n)*sqr(plane.n)-n.dot(plane.n)*n.dot(plane.n);
-		line.p = ((d*sqr(plane.n) - plane.d*(n.dot(plane.n)))*n)/b + ((plane.d*sqr(n) - d*(n.dot(plane.n)))*plane.n)/b;
-		line.d = n.cross(plane.n);
-
-		return line;
-	}
-
-	float distance(Line line)
-	{
-		return (-((line.p - p).dot(n))/line.d.dot(n));
-	}
-
-	Point cut(Line line)
-	{
-		return fromVec(Eigen::Vector3f(line.d * distance(line) + line.p));
-	}
-
-	float distance(Point point)
-	{
-		return toVec(point).dot(n) - d;
-	}
-
-	Eigen::Vector3f p;
-	Eigen::Vector3f n;
-	float d;
-};
 
 float getMinDistToPlanes(Point point, std::vector<Plane> planes)
 {
@@ -270,26 +88,6 @@ unsigned getIdxOfMinDistToPlanes(Point point, std::vector<Plane> planes)
   return minIdx;
 }
 
-float getMinDistToRect(Point point, std::vector<Eigen::Vector3f> rect)
-{
-  float minDist = FLT_MAX;
-
-  std::vector<Line> l;
-  l.push_back(Line(rect[0], rect[1]));
-  l.push_back(Line(rect[1], rect[2]));
-  l.push_back(Line(rect[2], rect[3]));
-  l.push_back(Line(rect[3], rect[0]));
-
-  for (unsigned i = 0; i < l.size(); ++i)
-	{
-    float d = l[i].distance(point);
-    if (d < minDist)
-      minDist = d;
-	}
-
-  return minDist;
-}
-
 Eigen::Vector3f getMax(Eigen::Vector3f v1, Eigen::Vector3f v2)
 {
 	return length(v1) > length(v2) ? v1 : v2;
@@ -301,9 +99,99 @@ float volume(Point p1 , Point p2)
 }
 
 //----------------------------------------------------------------
-// central datastructure for reconstruction
 
-std::vector<Point> createConvexHull(Point min, Point max);
+std::vector<Point> createBoundingBox(Point min, Point max)
+{
+	std::vector<Point> out;
+
+	out.push_back(min);
+	out.push_back(Point(max.x, min.y, min.z)); 
+	out.push_back(Point(max.x, max.y, min.z)); 
+	out.push_back(Point(min.x, max.y, min.z)); 
+	out.push_back(Point(min.x, min.y, max.z)); 
+	out.push_back(Point(max.x, min.y, max.z)); 
+	out.push_back(max);
+	out.push_back(Point(min.x, max.y, max.z)); 
+
+	return out;
+}
+
+pcl::Vertices createPolygon(unsigned i0, unsigned i1, unsigned i2, unsigned i3)
+{
+	pcl::Vertices polygon;
+
+	polygon.vertices.push_back(i0);
+	polygon.vertices.push_back(i1);
+	polygon.vertices.push_back(i2);
+	polygon.vertices.push_back(i3);
+
+	return polygon;
+}
+
+pcl::PolygonMesh::Ptr createFacesForBoundingBox(Cloud::Ptr cloudInput)
+{
+	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
+	pcl::toPCLPointCloud2(*cloudInput, meshOutput->cloud);
+
+	meshOutput->polygons.push_back(createPolygon(0, 1, 2, 3));
+	meshOutput->polygons.push_back(createPolygon(4, 5, 6, 7));
+	meshOutput->polygons.push_back(createPolygon(0, 1, 5, 4));
+	meshOutput->polygons.push_back(createPolygon(0, 3, 7, 4));
+	meshOutput->polygons.push_back(createPolygon(1, 2, 6, 5));
+	meshOutput->polygons.push_back(createPolygon(2, 3, 7, 6));
+
+	return meshOutput;	
+}
+
+Edges createEdgesForBoundingBox(unsigned base = 0)
+{
+	Edges edges;
+
+	Color color = Color(rand() % 256, rand() % 256, rand() % 256);
+	edges.push_back(Edge(base+0, base+1, color));
+	edges.push_back(Edge(base+1, base+2, color));
+	edges.push_back(Edge(base+2, base+3, color));
+	edges.push_back(Edge(base+3, base+0, color));
+
+	edges.push_back(Edge(base+4, base+5, color));
+	edges.push_back(Edge(base+5, base+6, color));
+	edges.push_back(Edge(base+6, base+7, color));
+	edges.push_back(Edge(base+7, base+4, color));
+
+	edges.push_back(Edge(base+0, base+4, color));
+	edges.push_back(Edge(base+1, base+5, color));
+	edges.push_back(Edge(base+2, base+6, color));
+	edges.push_back(Edge(base+3, base+7, color));
+
+	return edges;
+}
+
+Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
+{
+	int max_i = 0;
+	int max_j = 0;
+	float max_dist = 0;
+	for (unsigned i = 0; i < cloudInput->points.size()-1; ++i)
+		for (unsigned j = i; j < cloudInput->points.size()-1; ++j)
+		{
+			if (distance(cloudInput->points[i],  cloudInput->points[j]) > max_dist)
+			{
+				max_i = i;
+				max_j = j;
+				max_dist = distance(cloudInput->points[i],  cloudInput->points[j]);
+			}
+		}
+
+	Cloud::Ptr cloudOutput(new Cloud);
+	cloudOutput->points.push_back(cloudInput->points[max_i]);
+	cloudOutput->points.push_back(cloudInput->points[max_j]);
+
+	return cloudOutput;
+}
+
+//----------------------------------------------------------------
+// datastructure for reconstruction of bars
+
 
 struct Cluster
 {
@@ -470,7 +358,7 @@ struct Model
 
 	void approximateSides(Cloud::Ptr minmax, Eigen::Vector3f d)
 	{
-		std::vector<Point> bbox = createConvexHull(minmax->points[0], minmax->points[1]);
+		std::vector<Point> bbox = createBoundingBox(minmax->points[0], minmax->points[1]);
 
 		for (unsigned i = 0; i < 4; ++i)
 		{
@@ -577,85 +465,6 @@ pcl::PolygonMesh::Ptr extractFaces(Cloud::Ptr cloudInput)
 	return meshOutput;
 }
 
-float distance(Point p1, Point p2)
-{
-    return ::sqrt(::pow((p1.x-p2.x), 2) + ::pow((p1.y-p2.y), 2) + ::pow((p1.z-p2.z), 2));
-}
-
-float distance(Point point, std::vector<Point> listPoints)
-{
-	float out = 0;
-
-	for (unsigned i = 0; i < listPoints.size(); ++i)
-		out += distance(point, listPoints[i]);
-
-	return out;
-} 
-
-Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
-{
-	int max_i = 0;
-	int max_j = 0;
-	float max_dist = 0;
-	for (unsigned i = 0; i < cloudInput->points.size()-1; ++i)
-		for (unsigned j = i; j < cloudInput->points.size()-1; ++j)
-		{
-			if (distance(cloudInput->points[i],  cloudInput->points[j]) > max_dist)
-			{
-				max_i = i;
-				max_j = j;
-				max_dist = distance(cloudInput->points[i],  cloudInput->points[j]);
-			}
-		}
-
-	Cloud::Ptr cloudOutput(new Cloud);
-	cloudOutput->points.push_back(cloudInput->points[max_i]);
-	cloudOutput->points.push_back(cloudInput->points[max_j]);
-
-	return cloudOutput;
-}
-
-struct Color
-{
-	Color()
-	: red(255), green(255), blue(255)
-	{}
-
-	Color(unsigned red_, unsigned green_, unsigned blue_)
-	: red(red_), green(green_), blue(blue_)
-	{}
-
-	unsigned red;
-	unsigned green;
-	unsigned blue;
-};
-
-struct Edge
-{
-	Edge()
-	: start(), end(), color()
-	{}
-
-	Edge(unsigned start_, unsigned end_)
-	: start(start_), end(end_)
-	{}
-
-	Edge(unsigned start_, unsigned end_, Color color_)
-	: start(start_), end(end_), color(color_)
-	{}
-
-	bool operator < (const Edge& o) const
-	{
-		return start < o.start ? true : (start == o.start ? end < o.end: false);
-	}
-
-	unsigned start;
-	unsigned end;
-	Color color;
-};
-
-typedef std::vector<Edge> Edges;
-
 Edges createEdges(unsigned numEdges)
 {
 	Edges edges;
@@ -664,44 +473,6 @@ Edges createEdges(unsigned numEdges)
 		edges.push_back(Edge(i, i+1));
 
 	return edges;
-}
-
-Edges createEdgesForBox(unsigned base = 0)
-{
-	Edges edges;
-
-	Color color = Color(rand() % 256, rand() % 256, rand() % 256);
-	edges.push_back(Edge(base+0, base+1, color));
-	edges.push_back(Edge(base+1, base+2, color));
-	edges.push_back(Edge(base+2, base+3, color));
-	edges.push_back(Edge(base+3, base+0, color));
-
-	edges.push_back(Edge(base+4, base+5, color));
-	edges.push_back(Edge(base+5, base+6, color));
-	edges.push_back(Edge(base+6, base+7, color));
-	edges.push_back(Edge(base+7, base+4, color));
-
-	edges.push_back(Edge(base+0, base+4, color));
-	edges.push_back(Edge(base+1, base+5, color));
-	edges.push_back(Edge(base+2, base+6, color));
-	edges.push_back(Edge(base+3, base+7, color));
-
-	return edges;
-}
-
-std::vector<std::string> split(std::string s)
-{
-	std::vector<std::string> l;
-
-	std::istringstream iss(s);
-	while (iss)
-	{
-		std::string subs;
-		iss >> subs;
-		l.push_back(subs);
-	}
-
-	return l;
 }
 
 Edges loadPLYEdges(std::string fileName)
@@ -789,18 +560,6 @@ void savePLYEdges(std::string fileName, Cloud::Ptr cloudInput, Edges edgesInput)
 }
 
 //----------------------------------------------------------------
-
-pcl::Vertices createPolygon(unsigned i0, unsigned i1, unsigned i2, unsigned i3)
-{
-	pcl::Vertices polygon;
-
-	polygon.vertices.push_back(i0);
-	polygon.vertices.push_back(i1);
-	polygon.vertices.push_back(i2);
-	polygon.vertices.push_back(i3);
-
-	return polygon;
-}
 
 
 Eigen::Vector3f dirxy(std::vector<Point> box)
@@ -944,14 +703,13 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	else if (cutPoints[Edge(3,7)].z > zHigh)
 		above++;	
 
-	printf("xxx:%d ... %d\n", above, below);
 
 	std::vector<std::vector<Point> > res;
 	std::vector<Point> boxOut(boxTgt.size());
  
 	if (above == 4 and below == 0)
 	{
-		printf("EEE0\n");
+		printf(".. .. align 4/0/0\n");
 
 		boxOut = boxTgt;
 		res.push_back(boxOut);
@@ -960,7 +718,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	{
 		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
-			printf("AAA0\n");
+			printf(".. .. align 2/2/0 [0]\n");
 
 			boxOut = boxTgt;
 			boxOut[4] = Plane(cutPoints[Edge(1,5)], cutPoints[Edge(2,6)], Point(0,0,cutPoints[Edge(1,5)].z)).cut(Line(boxTgt[0], boxTgt[4]));
@@ -981,7 +739,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 		
 		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
 		{
-			printf("AAA1\n");
+			printf(".. .. align 2/2/0 [1]\n");
 
 			boxOut = boxTgt;
 			boxOut[4] = Plane(cutPoints[Edge(2,6)], cutPoints[Edge(3,7)], Point(0,0,cutPoints[Edge(2,6)].z)).cut(Line(boxTgt[0], boxTgt[4]));
@@ -1002,7 +760,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 		
 		if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
 		{
-			printf("AAA2\n");
+			printf(".. .. align 2/2/0 [2]\n");
 
 			boxOut = boxTgt;
 			boxOut[4] = cutPoints[Edge(3,7)];
@@ -1023,7 +781,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
-			printf("AAA3\n");
+			printf(".. .. align 2/2/0 [3]\n");
 
 			boxOut = boxTgt;
 			boxOut[4] = cutPoints[Edge(0,4)];
@@ -1046,7 +804,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	{
 		if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
-			printf("BBB0\n");
+			printf(".. .. align 2/0/2 [0]\n");
 
 			boxOut = boxTgt;
 			boxOut[1] = cutPoints[Edge(0,1)];
@@ -1058,7 +816,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(0,4)].z > zHigh) and (cutPoints[Edge(1,5)].z > zHigh))
 		{
-			printf("BBB1\n");
+			printf(".. .. align 2/0/2 [1]\n");
 
 			boxOut = boxTgt;
 			boxOut[2] = cutPoints[Edge(1,2)];
@@ -1070,7 +828,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(1,5)].z > zHigh) and (cutPoints[Edge(2,6)].z > zHigh))
 		{
-			printf("BBB2\n");
+			printf(".. .. align 2/0/2 [2]\n");
 
 			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,1)];
@@ -1082,7 +840,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(2,6)].z > zHigh) and (cutPoints[Edge(3,7)].z > zHigh))
 		{
-			printf("BBB3\n");
+			printf(".. .. align 2/0/2 [3]\n");
 
 			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,3)];
@@ -1097,7 +855,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	{
 		if ((cutPoints[Edge(1,5)].z < zLow) and (cutPoints[Edge(2, 6)].z < zLow))
 		{
-			printf("CCC0\n");
+			printf(".. .. align 0/2/2 [0]\n");
 
 			boxOut = boxTgt;
 			boxOut[1] = cutPoints[Edge(0,1)];
@@ -1111,7 +869,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(2,6)].z < zLow) and (cutPoints[Edge(3,7)].z < zLow))
 		{
-			printf("CCC1\n");
+			printf(".. .. align 0/2/2 [1]\n");
 
 			boxOut = boxTgt;
 			boxOut[2] = cutPoints[Edge(1,2)];
@@ -1125,7 +883,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(3, 7)].z < zLow))
 		{
-			printf("CCC2\n");
+			printf(".. .. align 0/2/2 [2]\n");
 
 			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,1)];
@@ -1139,7 +897,7 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 
 		else if ((cutPoints[Edge(0,4)].z < zLow) and (cutPoints[Edge(1,5)].z < zLow))
 		{
-			printf("CCC3\n");
+			printf(".. .. align 0/2/2 [3]\n");
 
 			boxOut = boxTgt;
 			boxOut[0] = cutPoints[Edge(0,3)];
@@ -1153,32 +911,18 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	}
 	else if (above == 0 and below == 4)
 	{
+		printf(".. .. align 0/0/4\n");
 		// empty box
 	}
 	else
 	{
+		printf(".. .. align %d/%d/%d ???\n", above, 4-above-below, below);
+
 		boxOut = boxTgt;
 		res.push_back(boxOut);
-		printf("unknown box alignment constellation\n");
 	}
 
 	return res;
-}
-
-std::vector<Point> createConvexHull(Point min, Point max)
-{
-	std::vector<Point> out;
-
-	out.push_back(min);
-	out.push_back(Point(max.x, min.y, min.z)); 
-	out.push_back(Point(max.x, max.y, min.z)); 
-	out.push_back(Point(min.x, max.y, min.z)); 
-	out.push_back(Point(min.x, min.y, max.z)); 
-	out.push_back(Point(max.x, min.y, max.z)); 
-	out.push_back(max);
-	out.push_back(Point(min.x, max.y, max.z)); 
-
-	return out;
 }
 
 
@@ -1199,22 +943,6 @@ Cloud::Ptr getMinMax(Cloud::Ptr cloudInput)
 	return cloudOutput;
 }
 
-// create surface for bounding box
-pcl::PolygonMesh::Ptr makeSurface(Cloud::Ptr cloudInput)
-{
-	pcl::PolygonMesh::Ptr meshOutput(new pcl::PolygonMesh);
-	pcl::toPCLPointCloud2(*cloudInput, meshOutput->cloud);
-
-	meshOutput->polygons.push_back(createPolygon(0, 1, 2, 3));
-	meshOutput->polygons.push_back(createPolygon(4, 5, 6, 7));
-	meshOutput->polygons.push_back(createPolygon(0, 1, 5, 4));
-	meshOutput->polygons.push_back(createPolygon(0, 3, 7, 4));
-	meshOutput->polygons.push_back(createPolygon(1, 2, 6, 5));
-	meshOutput->polygons.push_back(createPolygon(2, 3, 7, 6));
-
-	return meshOutput;	
-}
-
 
 Cloud::Ptr getBoundingBox(Cloud::Ptr cloudInput)
 {
@@ -1225,7 +953,7 @@ Cloud::Ptr getBoundingBox(Cloud::Ptr cloudInput)
 
 	pcl::getMinMax3D(*cloudInput, min, max);
 
-	return toCloud(createConvexHull(min, max));
+	return toCloud(createBoundingBox(min, max));
 }
 
 #include <algorithm>
@@ -1248,7 +976,7 @@ Cloud::Ptr getMinRectangle(Cloud::Ptr cloud)
 	Point proj_max; 
 	pcl::getMinMax3D(proj, proj_min, proj_max);
 
-	std::vector<Point> projPointList = createConvexHull(proj_min, proj_max);
+	std::vector<Point> projPointList = createBoundingBox(proj_min, proj_max);
 
 	std::vector<Point> pointList(projPointList.size());
 	for (unsigned i = 0; i < projPointList.size(); ++i) 
@@ -1531,30 +1259,6 @@ Cloud::Ptr filterByIndices(Cloud::Ptr cloudInput, pcl::PointIndices::Ptr indices
 	return cloudOutput;
 }
 
-Cloud::Ptr filterByDirection(Cloud::Ptr cloudInput, Eigen::Vector3f direction, float threshold)
-{
-	Cloud::Ptr cloudOutput(new Cloud);
-
-	for (unsigned i = 0; i < cloudInput->points.size(); i+=2)
-	{
-		Eigen::Vector3f p1 = toVec(cloudInput->points[i]);
-		Eigen::Vector3f p2 = toVec(cloudInput->points[i+1]);
-		
-		Eigen::Vector3f v = p1-p2;
-		Eigen::Vector3f d = v/::sqrt(v.dot(v)) - direction;
-		//std::cout << "d:" << d << "\n";
-
-		
-		if (d.dot(d) < threshold)
-		{
-			cloudOutput->points.push_back(cloudInput->points[i]);
-			cloudOutput->points.push_back(cloudInput->points[i+1]);
-		}
-	}
-
-	return cloudOutput;
-}
-
 unsigned cntEqualPoints(Cloud::Ptr cloud1, Cloud::Ptr cloud2)
 {
 	unsigned num = 0;
@@ -1619,10 +1323,14 @@ Eigen::Vector3f translate(Point p1, Point p2, Eigen::Vector3f n, float s, Point 
 	return n*s*k;
 }
 
+//----------------------------------------------------------------
+// reconstruction algorithms
+
 typedef std::vector<std::pair<unsigned, unsigned> > Network;
 
-void dump(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+void dumpBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 {
+	printf("------------------------------------------------------------------------------------\n");
 	for (unsigned b = 0; b < bars.size(); ++b)
 	{
 		std::cerr << "bar:" <<  b << ":";
@@ -1632,6 +1340,38 @@ void dump(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 		}
 		std::cerr << std::endl;
 	}
+	printf("------------------------------------------------------------------------------------\n");
+}
+
+void saveBars(std::vector<Bar>& bars, std::string outFilename, std::string barFilename, bool saveBarInFile = false)
+{
+		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
+		Edges edgesOutput;
+
+		for (unsigned b = 0; b < bars.size(); ++b)
+		{
+			pcl::PointCloud<Point>::Ptr cloudBar(new Cloud);
+			Edges edgesBar;
+
+			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+			{
+				Model& model = bars[b].listModel[s];
+
+				if (model.box->points.size())
+				{
+					Edges edgesBox = createEdgesForBoundingBox();
+					if (saveBarInFile)
+						merge(cloudBar, edgesBar, model.box, edgesBox);
+					merge(cloudOutput, edgesOutput, model.box, edgesBox);
+				}
+			}
+
+			if (saveBarInFile)
+				savePLYEdges(createFilename(barFilename, b), cloudBar, edgesBar);
+		}
+
+		std::cerr << "Output Cloud with Edges: " << outFilename << " Size: " << cloudOutput->points.size() << " Edges: " << edgesOutput.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput, edgesOutput);
 }
 
 Network extractNetwork(std::vector<Cluster>& clusters, float thresholdVolume)
@@ -1647,13 +1387,13 @@ Network extractNetwork(std::vector<Cluster>& clusters, float thresholdVolume)
 					continue;
 
 				if (clusters[base].overlapsWith(clusters[ref]))
-					std::cout << "overlap base:" << base << " ref:" << ref << " volume diff:" << ::fabs(clusters[base].volume() - clusters[ref].volume()) << std::endl;
+					std::cout << ".. overlap base:" << base << " ref:" << ref << " volume diff:" << ::fabs(clusters[base].volume() - clusters[ref].volume()) << std::endl;
 
 				// if the volume is similar then an cluster are connected then there is a connection between the cluster
 				if (::fabs(clusters[base].volume() - clusters[ref].volume()) < thresholdVolume and
 					clusters[base].overlapsWith(clusters[ref]))
 				{
-					std::cerr << "add connection: " << base << " " << ref << std::endl;
+					std::cerr << ".. add connection: " << base << " " << ref << std::endl;
 					network.push_back(std::pair<unsigned, unsigned>(base, ref));
 				}
 			}
@@ -1845,7 +1585,7 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 
 		if (planeList.size() < 2)
 		{
-			printf("extract 2 sides failed\n");
+			printf(".. .. extract 2 sides failed\n");
 			return cloudOutput;
 		}
 
@@ -1891,18 +1631,18 @@ Cloud::Ptr extractSides(Cloud::Ptr cloudInput, int numIterations, float minDist,
 		cloudOutput->points.push_back(p8);
 		cloudOutput->points.push_back(p6);
 
-		printf("extract 2 sides succeeded\n");
+		printf(".. .. extract 2 sides succeeded\n");
 		return cloudOutput;
 }
 
-unsigned extractSides(std::vector<Bar>& bars, std::vector<Cluster>& clusters, unsigned numIterations, float minNumInliersFactor, float maxNumOutliersFactor, float maxCos, float volumeRatio)
+unsigned extractModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters, unsigned numIterations, float minNumInliersFactor, float maxNumOutliersFactor, float maxCos, float volumeRatio)
 {
 	unsigned num = 0;
 
 	for (unsigned b = 0; b < bars.size(); ++b)
 		for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
 		{
-			printf("extract sides of cluster at:%d\n", bars[b].listModel[s].clusterId);
+			printf(".. cluster:%d try to extract sides\n", bars[b].listModel[s].clusterId);
 
 			Cluster& cluster = clusters[bars[b].listModel[s].clusterId];
 			Cloud::Ptr cloud = cluster.cloud;
@@ -1918,8 +1658,10 @@ unsigned extractSides(std::vector<Bar>& bars, std::vector<Cluster>& clusters, un
 			if (volume(box->points[0], box->points[6]) >=	cluster.volume()*volumeRatio)
 			{
 				bars[b].listModel[s].box = box;	
-				printf(".. .. extracted sides for model\n");
+				printf(".. .. volume ok for cluster:%d\n", bars[b].listModel[s].clusterId);
 			}
+			else
+				printf(".. .. volume to small for cluster:%d\n", bars[b].listModel[s].clusterId);
 
 			num++;
 		}
@@ -1961,7 +1703,7 @@ unsigned cloneModelInsideBar(std::vector<Bar>& bars, std::vector<Cluster>& clust
 	return num;
 }
 
-unsigned approximateModel(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+unsigned approximateModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 {
 	unsigned num = 0;
 
@@ -2022,7 +1764,7 @@ void calcLineCenter(std::vector<Bar>& bars)
 		line.d /= length(line.d);
 
 		bars[b].lineCenter = line;
-		printf("p:%f,%f,%f d:%f %f %f\n", line.p(0), line.p(1), line.p(2),  line.d(0), line.d(1), line.d(2));
+		//printf("p:%f,%f,%f d:%f %f %f\n", line.p(0), line.p(1), line.p(2),  line.d(0), line.d(1), line.d(2));
 	}
 }
 
@@ -2061,8 +1803,8 @@ unsigned mergeBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 			Line line2 = bars[b2].lineCenter;
 
 			float dist = line1.distance(line2);
-			float angle = bars[b1].lineCenter.d(2);
-			printf(".. b1:%d b2:%d -> distance:%f angle:%f\n", b1, b2, dist, angle);
+			float angle = bars[b1].lineCenter.d(2)*bars[b2].lineCenter.d;
+			printf(".. bar1:%d bar2:%d -> distance:%f angle:%f\n", b1, b2, dist, angle);
 
 			if (dist < maxDist and angle > minAngle)
 			{
@@ -2102,26 +1844,28 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 			if (not bars[b].listModel.size())
 				continue;
 
-			printf("==============================\n");
-			printf("bar:%d start alignment\n", b);
+			printf(".. bar:%d start alignment\n", b);
 
 			unsigned modelIdxBase = bars[b].listModel.size()-1;
 			for (unsigned sliceOff = 1;; ++sliceOff)
 			{
 				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
 
-				printf("*** clusterId:%d\n", clusterId);	
 				if (clusterId == clusters.size())
 				{
-					printf("bar:%d connected cluster not found\n", b);
+					printf(".. .. bar:%d connected cluster not found\n", b);
 					break;
 				}
+				else
+					printf(".. .. bar:%d connected cluster:%d\n", b, clusterId);	
 
   	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
  				Cloud::Ptr tgtCloud = bars[b].listModel[modelIdxBase].cloneSides(d);
 				Cloud::Ptr refCloud = getRefBox(bars, clusterId);
 				if (refCloud->points.size())
 				{
+					printf(".. .. bar:%d align to overlapping cluster:%d\n", b, clusterId);
+
       		std::vector<std::vector<Point> > alignedBoxes = alignBox(fromCloud(refCloud), fromCloud(tgtCloud));
 					for (unsigned i = 0; i < alignedBoxes.size(); ++i)
 					{
@@ -2129,18 +1873,17 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 						model.box = toCloud(alignedBoxes[i]);
 						model.aligned = true;
     	  		bars[b].listModel.push_back(model);
-						printf("bar:%d align to overlapping cluster:%d\n", b, clusterId);
 					}
 
 					if (alignedBoxes.size() == 0)
 					{
-						printf("bar:%d finished alignment\n", b);
+						printf(".. .. bar:%d finished alignment\n", b);
 						break;
 					}
 				}
 				else
 				{
-					printf("bar:%d reference model not found\n", b);
+					printf(".. .. bar:%d reference model not found\n", b);
 					break;
 					//model.box = tgtCloud;
 				}
@@ -2153,125 +1896,7 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 
 //----------------------------------------------------------------
 
-std::vector<Eigen::Vector3f> fitRect(Cloud::Ptr cloud, std::vector<Eigen::Vector3f> rect, int maxIt, int maxUnchangedIt, float initVariance)
-{
-	float minDist = FLT_MAX;
-
-	float variance = initVariance;
-	unsigned i = 0;
-	while (i < maxIt)
-	{
-		i += 1;
-
-		unsigned numUnchangedIt = 0;
-		while (numUnchangedIt < maxUnchangedIt)
-		{
-#if 0
-			unsigned ip = rand() % 4;
-			Eigen::Vector3f v = rect[ip];
-			rect[ip][0] += (rand()%2)*variance - variance/2;
-			rect[ip][1] += (rand()%2)*variance - variance/2;
-#endif
-
-			static unsigned ix = 0;
-			if (ix == 0)
-			{
-							rect[0][1] += variance;
-							rect[1][1] += variance;
-			}
-			else if (ix == 1)
-			{
-							rect[1][0] -= variance;
-							rect[2][0] -= variance;
-			}
-			else if (ix == 2)
-			{
-							rect[2][1] -= variance;
-							rect[3][1] -= variance;
-			}
-			else if (ix == 3)
-			{
-							rect[3][0] += variance;
-							rect[0][0] += variance;
-			}
-
-			float d = 0;
-			for (unsigned j = 0; j < cloud->points.size(); ++j)
-				 d += getMinDistToRect(cloud->points[j], rect);
-
-			if (d < minDist)
-			{
-				minDist = d;
-				numUnchangedIt = 0;
-			}
-			else
-			{
-				// undo changes
-			if (ix == 0)
-			{
-							rect[0][1] -= variance;
-							rect[1][1] -= variance;
-			}
-			else if (ix == 1)
-			{
-							rect[1][0] += variance;
-							rect[2][0] += variance;
-			}
-			else if (ix == 2)
-			{
-							rect[2][1] += variance;
-							rect[3][1] += variance;
-			}
-			else if (ix == 3)
-			{
-							rect[3][0] -= variance;
-							rect[0][0] -= variance;
-			}
-				numUnchangedIt += 1;
-			}
-
-			ix = (ix+1) % 4;
-
-			std::cout << "i:" << i << " numUnchangedIt:" << numUnchangedIt << " minDist:" << minDist << "\n";
-		}
-
-		variance = variance/2;
-	}
-
-	return rect;
-}
-
 //----------------------------------------------------------------
-
-int getModelType(std::string modelName)
-{
-	int modelType;
-
-	if (modelName == "plane")
-		modelType = pcl::SACMODEL_PLANE;
-	else if (modelName == "line")
-		modelType = pcl::SACMODEL_LINE;
-
-	return modelType;
-}
-
-pcl::ModelCoefficients::Ptr loadModelCoeffients(const char* filename)
-{
-	pcl::ModelCoefficients::Ptr modelCoefficients;
-	return modelCoefficients;
-}
-
-void saveModelCoefficients(const char* modelFilename, pcl::ModelCoefficients::Ptr coefficents)
-{
-}
-
-std::string createFilename(std::string filenameBase, unsigned seq)
-{
-	std::stringstream ss;
-	ss << filenameBase << seq << ".ply";
-
-	return ss.str();
-}
 
 int main (int argc, char** argv)
 {
@@ -2294,24 +1919,6 @@ int main (int argc, char** argv)
 		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
-#if 0
-	else if (toolname == "make-surface")
-	{
-		const char* inFilename = argv[argn++];
-		const char* outFilename = argv[argn++];
-
-		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
-
-		pcl::io::loadPLYFile(inFilename, *cloudInput);
-		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
-
-		pcl::PolygonMesh::Ptr meshOutput = makeSurface(cloudInput);
-
-		std::cerr << "Output Mesh Size: " << meshOutput->polygons.size() << std::endl;
-		pcl::io::savePLYFile(outFilename, *meshOutput);
-	}
-#endif
-
 	else if (toolname == "get-bounding-box")
 	{
 		const char* withEdges = argv[argn++];
@@ -2327,7 +1934,7 @@ int main (int argc, char** argv)
 
 		std::cerr << "Output Cloud: " << outFilename << " Size: " << cloudOutput->points.size() << std::endl;
 		if (std::string(withEdges) == "withEdges")
-			savePLYEdges(outFilename, cloudOutput, createEdgesForBox());
+			savePLYEdges(outFilename, cloudOutput, createEdgesForBoundingBox());
 		else
 			pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
@@ -2347,7 +1954,7 @@ int main (int argc, char** argv)
 
 		std::cerr << "Output Cloud: " << outFilename << " Size: " << cloudOutput->points.size() << std::endl;
 		if (std::string(withEdges) == "withEdges")
-			savePLYEdges(outFilename, cloudOutput, createEdgesForBox());
+			savePLYEdges(outFilename, cloudOutput, createEdgesForBoundingBox());
 		else
 			pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
@@ -2507,27 +2114,6 @@ int main (int argc, char** argv)
 			std::cerr << "Index: " << i << " Output Cloud Size: " << listCloudOutput[i]->points.size() << std::endl;
 			pcl::io::savePLYFile(createFilename(outFilename, i), *(listCloudOutput[i]));
 		}
-	}
-
-	else if (toolname == "filter-by-direction")
-	{
-		Eigen::Vector3f direction;
-		direction(0) = atof(argv[argn++]);
-		direction(1) = atof(argv[argn++]);
-		direction(2) = atof(argv[argn++]);
-		float threshold = atof(argv[argn++]);
-		const char* inFilename = argv[argn++];
-		const char* outFilename = argv[argn++];
-
-		pcl::PointCloud<Point>::Ptr cloudInput(new Cloud);
-
-		pcl::io::loadPLYFile(inFilename, *cloudInput);
-		std::cerr << "Input Cloud Size: " << cloudInput->points.size() << std::endl;
-
-		Cloud::Ptr cloudOutput = filterByDirection(cloudInput, direction, threshold);
-
-		std::cerr << "Output Cloud Size: " << cloudOutput->points.size() << std::endl;
-		pcl::io::savePLYFile(outFilename, *cloudOutput);
 	}
 
 	else if (toolname == "sac-segmentation")
@@ -2783,7 +2369,7 @@ int main (int argc, char** argv)
 
 		Cloud::Ptr cloudOutput = extractSides(cloudInput, numIterations, minDist, threshold, minNumInliers, maxNumOutliers, maxCos);
 
-		savePLYEdges(outFilename, cloudOutput, cloudOutput->points.size() ? createEdgesForBox() : Edges());
+		savePLYEdges(outFilename, cloudOutput, cloudOutput->points.size() ? createEdgesForBoundingBox() : Edges());
 	}
 
 	else if (toolname == "align-sides")
@@ -2807,7 +2393,7 @@ int main (int argc, char** argv)
 
 		std::vector<std::vector<Point> > boxOut = alignBox(boxRef, boxIn);
 
-		pcl::PolygonMesh::Ptr meshOutput = makeSurface(toCloud(boxOut[0])); 
+		pcl::PolygonMesh::Ptr meshOutput = createFacesForBoundingBox(toCloud(boxOut[0])); 
 
 		std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
@@ -2862,78 +2448,69 @@ int main (int argc, char** argv)
 		Network network = extractNetwork(clusters, thresholdVolume);
 		std::vector<Bar> bars = extractBars(network);
 
-		dump(bars, clusters);
+		dumpBars(bars, clusters);
 
 		unsigned num = 0;
 
 		if (workflow.find("1") != std::string::npos)
 		{
-			num += extractSides(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98, 0.5);
+			printf("========================================\n");
+			printf("extract models\n");
+			num += extractModels(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98, 0.5);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-			dump(bars, clusters);
+			dumpBars(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 1), barFilename);
 		}
 
 		if (workflow.find("2") != std::string::npos)
 		{
+			printf("========================================\n");
+			printf("clone models inside bar\n");
 			num += cloneModelInsideBar(bars, clusters);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-			dump(bars, clusters);
+			dumpBars(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 2), barFilename);
 		}
 
 		if (workflow.find("3") != std::string::npos)
 		{
+			printf("========================================\n");
+			printf("fit models\n");
 			fitModels(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 3), barFilename);
 		}
 
 		if (workflow.find("4") != std::string::npos)
 		{
-			num += approximateModel(bars, clusters);
+			printf("========================================\n");
+			printf("approxamte models\n");
+			num += approximateModels(bars, clusters);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-			dump(bars, clusters);
+			dumpBars(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 4), barFilename);
 		}
 
 		calcLineCenter(bars);
 
 		if (workflow.find("5") != std::string::npos)
 		{
+			printf("========================================\n");
+			printf("merge bars\n");
 			num += mergeBars(bars, clusters, sliceSize, 0.09, 0.98);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-			dump(bars, clusters);
+			dumpBars(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 5), barFilename);
 		}
 
 		if (workflow.find("6") != std::string::npos)
 		{
+			printf("========================================\n");
+			printf("align bars\n");
 			num += alignBars(bars, clusters, sliceSize);
 			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
-			dump(bars, clusters);
+			dumpBars(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 6), barFilename, true);
 		}
-
-
-		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
-		Edges edgesOutput;
-
-		for (unsigned b = 0; b < bars.size(); ++b)
-		{
-			pcl::PointCloud<Point>::Ptr cloudBar(new Cloud);
-			Edges edgesBar;
-
-			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
-			{
-				Model& model = bars[b].listModel[s];
-
-				if (model.box->points.size())
-				{
-					Edges edgesBox = createEdgesForBox();
-					merge(cloudBar, edgesBar, model.box, edgesBox);
-					merge(cloudOutput, edgesOutput, model.box, edgesBox);
-				}
-			}
-
-			savePLYEdges(createFilename(barFilename, b), cloudBar, edgesBar);
-		}
-
-		std::cerr << "Output Cloud with Edges: " << outFilename << " Size: " << cloudOutput->points.size() << " Edges: " << edgesOutput.size() << std::endl;
-		savePLYEdges(outFilename, cloudOutput, edgesOutput);
 	}
 
 	else
