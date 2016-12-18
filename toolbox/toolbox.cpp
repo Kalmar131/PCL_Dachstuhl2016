@@ -612,6 +612,35 @@ std::vector<Plane> _getPlanes(std::vector<Point> points)
 	return planes;
 }
 
+std::vector<Point> swapBoxAlongZ(std::vector<Point> box)
+{
+	std::vector<Point> boxSwapped;
+
+	if (box.size() < 8)
+		return boxSwapped;
+
+	boxSwapped.push_back(Point(box[4].x, box[4].y, box[0].z));
+	boxSwapped.push_back(Point(box[5].x, box[5].y, box[1].z));
+	boxSwapped.push_back(Point(box[6].x, box[6].y, box[2].z));
+	boxSwapped.push_back(Point(box[7].x, box[7].y, box[3].z));
+	boxSwapped.push_back(Point(box[0].x, box[0].y, box[4].z));
+	boxSwapped.push_back(Point(box[1].x, box[1].y, box[5].z));
+	boxSwapped.push_back(Point(box[2].x, box[2].y, box[6].z));
+	boxSwapped.push_back(Point(box[3].x, box[3].y, box[7].z));
+
+	return boxSwapped;
+}
+
+std::vector<Point> adjustBoxAlongZ(std::vector<Point> box, float zLow, float zHigh)
+{
+	float d = box[0].z - zLow > zHigh - box[7].z ?  zLow - box[0].z : zHigh - box[7].z;
+
+	for (unsigned i = 0; i < box.size(); ++i)
+		box[i].z += d;
+
+	return box;
+}
+
 std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector<Point> boxTgt)
 {
 	printf("boxRef:%d -> %f %f\n", boxRef.size(), boxRef[0].z, boxRef[7].z);
@@ -1898,7 +1927,53 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 					model.box = tgtCloud;
     	  	bars[b].listModel.push_back(model);
 				}
+			}
 
+			printf("################################################################\n");
+			modelIdxBase = 0;
+			for (int sliceOff = -1;; --sliceOff)
+			{
+  	    Eigen::Vector3f d = bars[b].lineCenter.d*(sliceSize/bars[b].lineCenter.d(2))*sliceOff;
+
+				unsigned clusterId = getConnectedCluster(clusters, bars[b].listModel[modelIdxBase].clusterId, d, clusters[bars[b].listModel[modelIdxBase].clusterId].sliceId+sliceOff);
+
+				if (clusterId == clusters.size())
+				{
+					printf(".. .. bar:%d connected cluster not found\n", b);
+					break;
+				}
+				else
+					printf(".. .. bar:%d connected cluster:%d\n", b, clusterId);	
+
+ 				std::vector<Point> tgtBox = swapBoxAlongZ(fromCloud(bars[b].listModel[modelIdxBase].cloneSides(d)));
+				std::vector<Point> refBox = swapBoxAlongZ(fromCloud(getRefBox(bars, clusterId)));
+				if (refBox.size())
+				{
+					printf(".. .. bar:%d align to overlapping cluster:%d\n", b, clusterId);
+
+      		std::vector<std::vector<Point> > alignedBoxes = alignBox(refBox, tgtBox);
+					for (unsigned i = 0; i < alignedBoxes.size(); ++i)
+					{
+	      		Model model(clusterId);
+						model.box = toCloud(adjustBoxAlongZ(swapBoxAlongZ(alignedBoxes[i]), refBox[0].z, refBox[7].z));
+						model.aligned = true;
+    	  		bars[b].listModel.push_back(model);
+					}
+
+					if (alignedBoxes.size() == 0)
+					{
+						printf(".. .. bar:%d finished alignment\n", b);
+						break;
+					}
+				}
+				else
+				{
+					printf(".. .. bar:%d reference model not found\n", b);
+
+	      	Model model(clusterId);
+					model.box = toCloud(swapBoxAlongZ(tgtBox));
+    	  	bars[b].listModel.push_back(model);
+				}
 			}
 		}
 
