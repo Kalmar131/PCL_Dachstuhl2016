@@ -39,50 +39,52 @@ int filter(std::string file)
 {
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_balken (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_s (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PointIndicesPtr ground (new pcl::PointIndices);
 
-	pcl::PCDReader reader;
-	// Fill in the cloud data
-	reader.read(file, *cloud);
+	pcl::io::loadPLYFile(file, *cloud);
 
-	// Create the filtering object
-	// schneide nur die Balkenstümpfe heraus, um diese zu filtern
-	pcl::PassThrough<pcl::PointXYZ> pass;
-	pass.setInputCloud (cloud);
-	pass.setFilterFieldName ("z");
-	pass.setFilterLimits (0.1, 3.12);
-	pass.filter (*cloud_filtered);
+	// das morphologische Filterobjekt wird erstellt
+	pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
+	pmf.setInputCloud (cloud);
+	pmf.setMaxWindowSize (20);
+	pmf.setSlope (0.2f);
+	pmf.setInitialDistance (0.5f);
+	pmf.setMaxDistance (5.0f);
+	pmf.extract (ground->indices);
 
+	// Filtern und extrahieren
+	pcl::ExtractIndices<pcl::PointXYZ> extract;
+	extract.setInputCloud (cloud);
+	extract.setIndices (ground);
+	extract.filter (*cloud_filtered);
+
+	// Extrahieren der nicht Bodenpunkte
+	extract.setNegative (true);
+	extract.filter (*cloud_filtered);
+
+	// das Balkenwerk ohne Boden als .ply
+	pcl::io::savePLYFile("utm.ply", *cloud_filtered, false);
+
+	// abschneiden der Dachbalken
+	pcl::PassThrough<pcl::PointXYZ> pass_balken;
+	pass_balken.setInputCloud (cloud_filtered);
+	pass_balken.setFilterFieldName ("z");
+	pass_balken.setFilterLimits (0, 3);
+	pass_balken.filter (*cloud_balken);
+
+	//Balkenstümpfe für das Clustering
 	pcl::PassThrough<pcl::PointXYZ> pass_f;
-	pass_f.setInputCloud (cloud_filtered);
+	pass_f.setInputCloud (cloud); //muss wider auf cloud_filtered gesetzt werden
 	pass_f.setFilterFieldName ("z");
-	pass_f.setFilterLimits (1, 1.5);
+	pass_f.setFilterLimits (2.6, 2.8);
 	pass_f.filter (*cloud_s);
 
+	// schreiben der Ergebnisse
 	pcl::io::savePLYFile("balken_stuempfe.ply", *cloud_s, false);
 
-	std::cerr << "Cloud after filtering: " << std::endl;
-	for (size_t i = 0; i < cloud_filtered->points.size (); ++i)
-	std::cerr << "    " << cloud_filtered->points[i].x << " "
-					<< cloud_filtered->points[i].y << " "
-					<< cloud_filtered->points[i].z << std::endl;
-
-	//Ausßreiser eleminieren
-	// Create the filtering object
-	pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
-	sor.setInputCloud (cloud_filtered);
-	sor.setMeanK (500);
-	sor.setStddevMulThresh (1.0);
-	sor.filter (*cloud_filtered);
-
-	std::cerr << "Cloud after filtering: " << std::endl;
-	std::cerr << *cloud_filtered << std::endl;
-
-	pcl::io::savePLYFile("balkenwerk.ply", *cloud_filtered, false);
-
-	  sor.setNegative (true);
-	  sor.filter (*cloud_filtered);
-	  pcl::io::savePLYFile("balkenwerk_outliers.ply", *cloud_filtered, false);
+	pcl::io::savePLYFile("balkenwerk.ply", *cloud_balken, false);
 
 	return (0);
 
@@ -91,19 +93,17 @@ int filter(std::string file)
 int euclidean_cluster_extraction (std::string file){
 
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_stuempfe (new pcl::PointCloud<pcl::PointXYZ>);
-
 	pcl::io::loadPLYFile(file,*cloud_stuempfe);
 
-	std::cout << "PointCloud before filtering has: " << cloud_stuempfe->points.size () << " data points." << std::endl; //*
-
-	// Creating the KdTree object for the search method of the extraction
+	// KD Baum wird erstellt und das Euklidische Clustering durchgeführt
 	pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
 	tree->setInputCloud (cloud_stuempfe);
 
 	std::vector<pcl::PointIndices> cluster_indices;
 	pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
 	ec.setClusterTolerance (0.2);
-	ec.setMinClusterSize (40);
+	//für gedownsampelte Punktwolke, muss entsprechend angepasst werden
+	ec.setMinClusterSize (10);
 	ec.setMaxClusterSize (200);
 	ec.setSearchMethod (tree);
 	ec.setInputCloud (cloud_stuempfe);
@@ -114,8 +114,7 @@ int euclidean_cluster_extraction (std::string file){
 	for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
 	{
 		Eigen::Vector4f centroid;
-		//Globale Variablen
-
+		// Die Cluster werden aus den Indices in eine Punktwolke geschrieben
 		pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster (new pcl::PointCloud<pcl::PointXYZ>);
 		for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
 			cloud_cluster->points.push_back (cloud_stuempfe->points[*pit]); //*
@@ -124,18 +123,20 @@ int euclidean_cluster_extraction (std::string file){
 		cloud_cluster->height = 1;
 		cloud_cluster->is_dense = true;
 
+		//Für jedes Cluster wird ein Centroid gebildet, welcher den Mittelpunkt für den Min cut berechnet
 		pcl::compute3DCentroid(*cloud_cluster,centroid);
 
+		//Centroid Punkt werden in eine Cloud geschrieben
 		pcl::PointXYZ central_point;
 		central_point.x = centroid[0];
 		central_point.y = centroid[1];
 		central_point.z = centroid[2];
 		cloud_centroid->points.push_back(central_point);
-
+		/* Für Testzwecke
 		std::stringstream ss;
 		ss << "cloud_cluster_" << j << ".ply";
 		pcl::io::savePLYFile(ss.str (), *cloud_cluster, false); //*
-
+		 */
 	   j++;
 	}
 	pcl::io::savePLYFile("center.ply", *cloud_centroid, false); //Für Test ob Cenbtroide auch wirklich die Mittelpunkte sind
@@ -143,59 +144,52 @@ int euclidean_cluster_extraction (std::string file){
 	return (0);
 }
 
-int min_cut(std::string gesamt,std::string centroide){
+int min_cut(std::string gesamt,std::string centroide,int min_size){
 
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_centroid (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_center_filtered (new pcl::PointCloud<pcl::PointXYZ>);
 
+	//gesamtpunktwolke aus welcher die Balken segmentiert werden
 	pcl::io::loadPLYFile(gesamt,*cloud_in);
+	//centroid Punktwolke welche die mittelpunkte für das extrahieren liefern
 	pcl::io::loadPLYFile(centroide,*cloud_centroid);
 
+	//beseitigen der störenden seitenwände
 	pcl::PassThrough<pcl::PointXYZ> pass_center;
 	pass_center.setInputCloud (cloud_centroid);
 	pass_center.setFilterFieldName ("y");
-	pass_center.setFilterLimits (1, 13.5);
+	pass_center.setFilterLimits (-7, 13);
 	pass_center.filter (*cloud_center_filtered);
 
 	pcl::io::savePLYFile("cloud_center_filtered.ply", *cloud_center_filtered, false);
 
 	int x=0;
+
 	for (pcl::PointCloud<pcl::PointXYZ>::const_iterator mx = cloud_center_filtered->points.begin();mx != cloud_center_filtered->points.end(); ++mx)
 	{
-	// Min-cut clustering object.
+		// MinCut Objekt
 		pcl::MinCutSegmentation<pcl::PointXYZ> clustering;
 		clustering.setInputCloud(cloud_in);
-		// Create a cloud that lists all the points that we know belong to the object
-		// (foreground points). We should set here the object's center.
 		pcl::PointCloud<pcl::PointXYZ>::Ptr foregroundPoints(new pcl::PointCloud<pcl::PointXYZ>());
 		pcl::PointXYZ point;
 		point.x=mx->x;
 		point.y=mx->y;
-		point.z=0;
+		point.z=-5;
 		std::cout << "CUT X: " << point.x << std::endl;
 		std::cout << "CUT Y: " << point.y << std::endl;
 		foregroundPoints->points.push_back(point);
 		clustering.setForegroundPoints(foregroundPoints);
-		// Set sigma, which affects the smooth cost calculation. It should be
-		// set depending on the spacing between points in the cloud (resolution).
-		clustering.setSigma(0.05);
-		// Set the radius of the object we are looking for.
-		clustering.setRadius(1.5);
-		// Set the number of neighbors to look for. Increasing this also increases
-		// the number of edges the graph will have.
-		clustering.setNumberOfNeighbours(20);
-		// Set the foreground penalty. It is the weight of the edges
-		// that connect clouds points with the source vertex.
+		clustering.setSigma(0.2);
+		clustering.setRadius(2);
+		clustering.setNumberOfNeighbours(50);
 		clustering.setSourceWeight(0.8);
 
 		std::vector <pcl::PointIndices> clusters;
 		clustering.extract(clusters);
-		// For every cluster...
 
 		for (std::vector<pcl::PointIndices>::const_iterator i = clusters.begin(); i != clusters.end(); ++i)
 		{
-			// ...add all its points to a new cloud...
 			pcl::PointCloud<pcl::PointXYZ>::Ptr cluster_mint(new pcl::PointCloud<pcl::PointXYZ>);
 			for (std::vector<int>::const_iterator point = i->indices.begin(); point != i->indices.end(); point++)
 				cluster_mint->points.push_back(cloud_in->points[*point]);
@@ -203,23 +197,26 @@ int min_cut(std::string gesamt,std::string centroide){
 			cluster_mint->height = 1;
 			cluster_mint->is_dense = true;
 
-				std::stringstream sm;
-				sm << "min_cut_" << x << ".ply";
-				pcl::io::savePLYFile(sm.str (), *cluster_mint, false);
-				std::cout << sm.str() << "extracted"<< std::endl;
-				x++;
-
+			int schwellenwert = cloud_in->points.size()-cluster_mint->points.size();
+			//Balken muss kleiner als die Input wolke
+			if(cluster_mint->points.size() > min_size && cluster_mint->points.size() < schwellenwert){
+					std::stringstream sm;
+					sm << "balken_" << x << ".ply";
+					pcl::io::savePLYFile(sm.str (), *cluster_mint, false);
+					std::cout << sm.str() << "extracted"<< std::endl;
+			}
 		}
+		x++;
 	}
-
 	return(0);
 }
 
 int main()
 {
-	filter("gesamt.pcd");
+	filter("gesamt.ply");
 	euclidean_cluster_extraction("balken_stuempfe.ply");
-	min_cut("balkenwerk.ply","center.ply");
+	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
+	min_cut("balkenwerk.ply","center.ply",500);
 	cout <<" ready";
 
 	return (0);
