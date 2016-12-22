@@ -76,9 +76,9 @@ int filter(std::string file)
 
 	//Balkenstümpfe für das Clustering
 	pcl::PassThrough<pcl::PointXYZ> pass_f;
-	pass_f.setInputCloud (cloud); //muss wider auf cloud_filtered gesetzt werden
+	pass_f.setInputCloud (cloud_filtered);
 	pass_f.setFilterFieldName ("z");
-	pass_f.setFilterLimits (2.6, 2.8);
+	pass_f.setFilterLimits (1.8, 2.0);
 	pass_f.filter (*cloud_s);
 
 	// schreiben der Ergebnisse
@@ -175,7 +175,7 @@ int min_cut(std::string gesamt,std::string centroide,int min_size){
 		pcl::PointXYZ point;
 		point.x=mx->x;
 		point.y=mx->y;
-		point.z=-5;
+		point.z=-mx->z;
 		std::cout << "CUT X: " << point.x << std::endl;
 		std::cout << "CUT Y: " << point.y << std::endl;
 		foregroundPoints->points.push_back(point);

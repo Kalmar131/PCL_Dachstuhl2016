@@ -42,10 +42,10 @@ EQUALS = =
 CMAKE_EDIT_COMMAND = /usr/bin/ccmake
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = "/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/src"
+CMAKE_SOURCE_DIR = /home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/src
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = "/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/build"
+CMAKE_BINARY_DIR = /home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -72,9 +72,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start "/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/build/CMakeFiles" "/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/build/CMakeFiles/progress.marks"
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/build/CMakeFiles /home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/build/CMakeFiles/progress.marks
 	$(MAKE) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start "/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/build/CMakeFiles" 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target

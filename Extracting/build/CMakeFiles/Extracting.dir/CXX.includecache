@@ -6,7 +6,7 @@
 
 #IncludeRegexTransform: 
 
-/home/loren/Entwicklung/C++/Projekt PCL/PCL_Dachstuhl2016/Extracting/src/extracting.cpp
+/home/loren/Entwicklung/C++/PCL_Dachstuhl2016/Extracting/src/extracting.cpp
 iostream
 -
 vector
