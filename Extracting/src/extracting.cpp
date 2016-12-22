@@ -90,7 +90,7 @@ int filter(std::string file)
 
 }
 
-int euclidean_cluster_extraction (std::string file){
+int euclidean_cluster_extraction (std::string file, double cluster_tolerance,int clustermin_size,int clustermax_size){
 
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_stuempfe (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::io::loadPLYFile(file,*cloud_stuempfe);
@@ -101,10 +101,10 @@ int euclidean_cluster_extraction (std::string file){
 
 	std::vector<pcl::PointIndices> cluster_indices;
 	pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-	ec.setClusterTolerance (0.2);
+	ec.setClusterTolerance (cluster_tolerance);
 	//für gedownsampelte Punktwolke, muss entsprechend angepasst werden
-	ec.setMinClusterSize (10);
-	ec.setMaxClusterSize (200);
+	ec.setMinClusterSize (clustermin_size);
+	ec.setMaxClusterSize (clustermax_size);
 	ec.setSearchMethod (tree);
 	ec.setInputCloud (cloud_stuempfe);
 	ec.extract (cluster_indices);
@@ -214,7 +214,7 @@ int min_cut(std::string gesamt,std::string centroide,int min_size){
 int main()
 {
 	filter("gesamt.ply");
-	euclidean_cluster_extraction("balken_stuempfe.ply");
+	euclidean_cluster_extraction("balken_stuempfe.ply",0.2,10,200);
 	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
 	min_cut("balkenwerk.ply","center.ply",500);
 	cout <<" ready";
