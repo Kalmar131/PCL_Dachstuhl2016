@@ -59,6 +59,8 @@ pcl/console/time.h
 -
 pcl/common/transforms.h
 -
+pcl/common/common.h
+-
 pcl/sample_consensus/method_types.h
 -
 pcl/sample_consensus/model_types.h
@@ -66,6 +68,10 @@ pcl/sample_consensus/model_types.h
 pcl/features/don.h
 -
 pcl/visualization/cloud_viewer.h
+-
+boost/filesystem.hpp
+-
+boost/lambda/bind.hpp
 -
 
 /usr/include/eigen3/Eigen/Cholesky

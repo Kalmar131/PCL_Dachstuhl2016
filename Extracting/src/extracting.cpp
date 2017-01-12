@@ -25,6 +25,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/console/time.h>
 #include <pcl/common/transforms.h>
+#include <pcl/common/common.h>
 
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
@@ -32,8 +33,14 @@
 #include <pcl/features/don.h>
 #include <pcl/visualization/cloud_viewer.h>
 
+#include <boost/filesystem.hpp>
+#include <boost/lambda/bind.hpp>
+
 using namespace std;
 using namespace pcl;
+
+// Array welches die Anzahl der Balken speichert für die
+std::vector< int> arr_balken;
 
 int filter(std::string file)
 {
@@ -44,6 +51,10 @@ int filter(std::string file)
 	pcl::PointIndicesPtr ground (new pcl::PointIndices);
 
 	pcl::io::loadPLYFile(file, *cloud);
+
+	//TODO: Orginal muss noch gedownsampelt werden
+
+	std::cout << "PointCloud before filtering has: " << cloud->points.size () << " data points." << std::endl; //*
 
 	// das morphologische Filterobjekt wird erstellt
 	pcl::ProgressiveMorphologicalFilter<pcl::PointXYZ> pmf;
@@ -67,12 +78,16 @@ int filter(std::string file)
 	// das Balkenwerk ohne Boden als .ply
 	pcl::io::savePLYFile("utm.ply", *cloud_filtered, false);
 
+	std::cout << "Morphologisches Filtern beendet" << std::endl; //*
+
 	// abschneiden der Dachbalken
 	pcl::PassThrough<pcl::PointXYZ> pass_balken;
 	pass_balken.setInputCloud (cloud_filtered);
 	pass_balken.setFilterFieldName ("z");
 	pass_balken.setFilterLimits (0, 3);
 	pass_balken.filter (*cloud_balken);
+
+	std::cout << "abschneiden der Dachbalken beendet" << std::endl; //*
 
 	//Balkenstümpfe für das Clustering
 	pcl::PassThrough<pcl::PointXYZ> pass_f;
@@ -85,6 +100,8 @@ int filter(std::string file)
 	pcl::io::savePLYFile("balken_stuempfe.ply", *cloud_s, false);
 
 	pcl::io::savePLYFile("balkenwerk.ply", *cloud_balken, false);
+
+	std::cout << "Filtern beendet" << std::endl; //*
 
 	return (0);
 
@@ -140,6 +157,8 @@ int euclidean_cluster_extraction (std::string file, double cluster_tolerance,int
 	   j++;
 	}
 	pcl::io::savePLYFile("center.ply", *cloud_centroid, false); //Für Test ob Cenbtroide auch wirklich die Mittelpunkte sind
+
+	std::cout << "EuclideanClusterExtraction beendet" << std::endl; //*
 
 	return (0);
 }
@@ -201,9 +220,10 @@ int min_cut(std::string gesamt,std::string centroide,int min_size){
 			//Balken muss kleiner als die Input wolke
 			if(cluster_mint->points.size() > min_size && cluster_mint->points.size() < schwellenwert){
 					std::stringstream sm;
-					sm << "balken_" << x << ".ply";
-					pcl::io::savePLYFile(sm.str (), *cluster_mint, false);
+					sm << "balken_downsampelt_" << x << ".ply";
+					pcl::io::savePLYFile(sm.str(), *cluster_mint, false);
 					std::cout << sm.str() << "extracted"<< std::endl;
+					arr_balken.push_back(x);
 			}
 		}
 		x++;
@@ -211,12 +231,58 @@ int min_cut(std::string gesamt,std::string centroide,int min_size){
 	return(0);
 }
 
+int merge(std::string orginal){
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_orginal (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_balken (new pcl::PointCloud<pcl::PointXYZ>);
+
+	// Read in the cloud data
+	  pcl::PCDReader reader;
+	  reader.read(orginal,*cloud_orginal);
+
+	  std::cout << orginal<< " hat: " << cloud_orginal->points.size () << " Datenpunkte" << std::endl; //*
+	  std::cout << "Es werden " << arr_balken.size () << " Balken extrahiert." << std::endl; //*
+
+	  //TODO: i  noch via .ply files zählen beschränken
+	  for (int  i=0; i<arr_balken.size();i++){
+		  std::stringstream sm;
+		  sm << "balken_downsampelt_" << arr_balken[i] << ".ply";
+		  pcl::io::loadPLYFile(sm.str(),*cloud_balken);
+
+		  std::cout << sm.str()<< "geladen" << std::endl; //*
+
+		  //calculate the BB Box
+		  pcl::PointXYZ minPt, maxPt,balken_pkt;
+		  pcl::getMinMax3D (*cloud_balken, minPt, maxPt);
+
+		  pcl::PointCloud<pcl::PointXYZ>::Ptr balken_merge(new pcl::PointCloud<pcl::PointXYZ>);
+		  for(pcl::PointCloud<pcl::PointXYZ>::const_iterator mx = cloud_orginal->points.begin();mx != cloud_orginal->points.end(); ++mx){
+			  if(mx-> x > minPt.x & mx-> x<maxPt.x){
+				  if(mx-> y > minPt.y & mx-> y<maxPt.y){
+					  if(mx-> z > minPt.z & mx-> z<maxPt.z){
+						  	balken_pkt.x = mx->x;
+						  	balken_pkt.y =mx->y;
+						  	balken_pkt.z =mx->z;
+						  	balken_merge->points.push_back(balken_pkt);
+					  }
+				  }
+			  }
+		  }
+		std::stringstream sb;
+		sb << "balken_orginal" << i << ".ply";
+		pcl::io::savePLYFile(sb.str(), *balken_merge, false);
+		std::cout << sb.str() << "extracted"<< std::endl;
+	  }
+
+	  return (0);
+}
+
 int main()
 {
-	filter("gesamt.ply");
+	//filter("gesamt.ply");
 	euclidean_cluster_extraction("balken_stuempfe.ply",0.2,10,200);
 	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
 	min_cut("balkenwerk.ply","center.ply",500);
+	merge("gesamt.pcd");
 	cout <<" ready";
 
 	return (0);
