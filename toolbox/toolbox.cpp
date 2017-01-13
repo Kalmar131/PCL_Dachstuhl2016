@@ -665,6 +665,9 @@ std::vector<std::vector<Point> > alignBox(std::vector<Point> boxRef, std::vector
 	}
 	printf("++++++ listidx-size:%d\n", listIdx.size());
 
+	if (listIdx.size() == 0)
+		return std::vector<std::vector<Point> >();
+
 	bool maximize = ::fabs(dxy(0)) > ::fabs(dxy(1)) ? dxy(0) > 0 : dxy(1) > 0;
 
 	float optDist = maximize ? FLT_MIN : FLT_MAX;
@@ -1695,11 +1698,10 @@ unsigned extractModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters, u
 			{
 				bars[b].listModel[s].box = box;	
 				printf(".. .. volume ok for cluster:%d\n", bars[b].listModel[s].clusterId);
+				num++;
 			}
 			else
 				printf(".. .. volume to small for cluster:%d\n", bars[b].listModel[s].clusterId);
-
-			num++;
 		}
 
 	return num;
@@ -1806,6 +1808,10 @@ void calcLineCenter(std::vector<Bar>& bars)
 
 void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 {
+		float sumDist1 = 0;
+		float sumDist2 = 0;
+		unsigned n = 0;
+
 		for (unsigned b = 0; b < bars.size(); ++b)
 			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
 			{
@@ -1815,11 +1821,16 @@ void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 					continue;
 
 				float dist1 = model.getMeanDist(clusters[model.clusterId].cloud);
-				float dist2 = dist1;
-				//float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
+				//float dist2 = dist1;
+				float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
+				sumDist1 += dist1;
+				sumDist2 += dist2;
+				n += 1;
 
-				printf(".. b:%d s:%d -> %f => %f\n", b, s, dist1, dist2);
+				printf(".. .. b:%d s:%d -> %f => %f\n", b, s, dist1, dist2);
 			}
+
+		printf(".. mean:%f => %f\n", sumDist1/n, sumDist2/n);
 }
 
 unsigned mergeBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float sliceSize, float maxDist, float minAngle)
@@ -2483,6 +2494,14 @@ int main (int argc, char** argv)
 
 		std::cerr << "Output Mesh: " << outFilename << " Size: " << meshOutput->polygons.size() << std::endl;
 		pcl::io::savePLYFile(outFilename, *meshOutput);
+
+		if (boxOut.size() == 2)
+		{
+			pcl::PolygonMesh::Ptr meshOutput = createFacesForBoundingBox(toCloud(boxOut[1])); 
+
+			std::cerr << "Output Mesh: " << std::string(outFilename)+"-2" << " Size: " << meshOutput->polygons.size() << std::endl;
+			pcl::io::savePLYFile(std::string(outFilename)+"-2", *meshOutput);
+		}
 	}
 
 	else if (toolname == "reconstruct-bars")
@@ -2557,7 +2576,7 @@ int main (int argc, char** argv)
 			printf("========================================\n");
 			printf("extract models\n");
 			num += extractModels(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98, 0.5);
-			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			printf("phase 1: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 1), barFilename);
 		}
@@ -2567,7 +2586,7 @@ int main (int argc, char** argv)
 			printf("========================================\n");
 			printf("clone models inside bar\n");
 			num += cloneModelInsideBar(bars, clusters);
-			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			printf("phase 2: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 2), barFilename);
 		}
@@ -2585,7 +2604,7 @@ int main (int argc, char** argv)
 			printf("========================================\n");
 			printf("approximate models\n");
 			num += approximateModels(bars, clusters);
-			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			printf("phase 4: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 4), barFilename, true);
 		}
@@ -2597,9 +2616,17 @@ int main (int argc, char** argv)
 			printf("========================================\n");
 			printf("merge bars\n");
 			num += mergeBars(bars, clusters, sliceSize, 0.09, 0.98);
-			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			printf("phase 5: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 5), barFilename);
+		}
+
+		if (workflow.find("7") != std::string::npos)
+		{
+			printf("========================================\n");
+			printf("fit models 2\n");
+			fitModels(bars, clusters);
+			saveBars(bars, createFilename(outFilename, 7), barFilename);
 		}
 
 		if (workflow.find("6") != std::string::npos)
@@ -2607,7 +2634,7 @@ int main (int argc, char** argv)
 			printf("========================================\n");
 			printf("align bars\n");
 			num += alignBars(bars, clusters, sliceSize);
-			printf("reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			printf("phase 6: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 6), barFilename, true);
 		}
