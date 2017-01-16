@@ -1,8 +1,8 @@
 #!/bin/bash
 
 TOOLBOX=./toolbox/toolbox
-WORK_DIR=../data/workflow2-balken001/
-DATA_FILE=../data/balken001/balken001.ply
+WORK_DIR=../data/workflow2-balken18/
+DATA_FILE=../data/balken18/balken18.ply
 SLICE_BASE_PATTERN="slice_"
 CLUSTER_BASE_PATTERN="cluster_"
 BBOX_BASE_PATTERN="bbox_"

@@ -1922,6 +1922,7 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 						model.box = toCloud(alignedBoxes[i]);
 						model.aligned = true;
     	  		bars[b].listModel.push_back(model);
+						num++;
 					}
 
 					if (alignedBoxes.size() == 0)
@@ -1937,6 +1938,7 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 	      	Model model(clusterId);
 					model.box = tgtCloud;
     	  	bars[b].listModel.push_back(model);
+					num++;
 				}
 			}
 
@@ -1969,6 +1971,7 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 						model.box = toCloud(adjustBoxAlongZ(swapBoxAlongZ(alignedBoxes[i]), refBox[0].z, refBox[7].z));
 						model.aligned = true;
     	  		bars[b].listModel.push_back(model);
+						num++;
 					}
 
 					if (alignedBoxes.size() == 0)
@@ -1984,6 +1987,7 @@ unsigned alignBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, float
 	      	Model model(clusterId);
 					model.box = toCloud(swapBoxAlongZ(tgtBox));
     	  	bars[b].listModel.push_back(model);
+					num++;
 				}
 			}
 		}
