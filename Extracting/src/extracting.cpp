@@ -278,7 +278,7 @@ int merge(std::string orginal){
 
 int main()
 {
-	//filter("gesamt.ply");
+	filter("merged.pcd");
 	euclidean_cluster_extraction("balken_stuempfe.ply",0.2,10,200);
 	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
 	min_cut("balkenwerk.ply","center.ply",500);
