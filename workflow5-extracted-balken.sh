@@ -3,36 +3,33 @@
 TOOLBOX=./toolbox/toolbox
 NUM_SLICES=32
 
-reconstruct()
-{
-	WORK_DIR=../data/workflow5-$1/
-	DATA_FILE=../data/$1/$1.ply
+exclude_list=( 1 4 22 25 33 38 41 50 )
 
-	rm -rf $WORK_DIR/*
-	$TOOLBOX reconstruct-bars $2 z -1 3 $NUM_SLICES  0.1 60 10000 0.001 2000 0.2 0.04 $DATA_FILE $WORK_DIR/result $WORK_DIR/bar_ 
+contains()
+{
+	j=0
+	while (( j < ${#exclude_list[*]} )) ; do
+  	  if (( $1 == ${exclude_list[$j]} )); then
+    	  return 1
+    	fi
+		let j++
+	done
+
+	return 0
 }
 
 for i in `seq 1 55` ; do
 	mkdir ../data/balken$i
 	mkdir ../data/workflow5-balken$i
 	cp ./Extracting/build/balken_orginal$i.ply ../data/balken$i/balken$i.ply
-	reconstruct balken$i 123456
+	$TOOLBOX statistical-outlier-removal 20 0.9 ../data/balken18/balken18.ply out.ply
+
+	WORK_DIR=../data/workflow5-balken$i/
+	DATA_FILE=../data/balken$i/balken$i.ply
+
+	rm -rf $WORK_DIR/*
+	$TOOLBOX reconstruct-bars 123456 z -1 3 $NUM_SLICES  0.1 60 10000 0.001 2000 0.2 0.04 $DATA_FILE $WORK_DIR/result $WORK_DIR/bar_ 
 done
-
-exclude_list=( 1 4 22 25 33 38 41 50 )
-
-contains()
-{
-	i=0
-	while (( i < ${#exclude_list[*]} )) ; do
-  	  if (( $1 == ${exclude_list[$i]} )); then
-    	  return 1
-    	fi
-		let i++
-	done
-
-	return 0
-}
 
 cp ../data/empty.ply ../data/result.ply	
 for n in `seq 1 55` ; do

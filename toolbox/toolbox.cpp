@@ -55,6 +55,7 @@ void saveModelCoefficients(const char* modelFilename, pcl::ModelCoefficients::Pt
 }
 
 //----------------------------------------------------------------
+// more geometric helpers
 
 float getMinDistToPlanes(Point point, std::vector<Plane> planes)
 {
@@ -99,6 +100,7 @@ float volume(Point p1 , Point p2)
 }
 
 //----------------------------------------------------------------
+// utility functions
 
 std::vector<Point> createBoundingBox(Point min, Point max)
 {
@@ -190,7 +192,7 @@ Cloud::Ptr getMaxDistance(Cloud::Ptr cloudInput)
 }
 
 //----------------------------------------------------------------
-// datastructure for reconstruction of bars
+// datastructures for reconstruction of bars
 
 
 struct Cluster
@@ -1373,6 +1375,35 @@ void dumpBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 		std::cerr << std::endl;
 	}
 	printf("------------------------------------------------------------------------------------\n");
+}
+
+void saveBBoxForBars(std::vector<Bar>& bars, std::vector<Cluster>& clusters, std::string outFilename, std::string barFilename, bool saveBarInFile = false)
+{
+		pcl::PointCloud<Point>::Ptr cloudOutput(new Cloud);
+		Edges edgesOutput;
+
+		for (unsigned b = 0; b < bars.size(); ++b)
+		{
+			pcl::PointCloud<Point>::Ptr cloudBar(new Cloud);
+			Edges edgesBar;
+
+			for (unsigned s = 0; s < bars[b].listModel.size(); ++s)
+			{
+				Cloud::Ptr minmax = clusters[bars[b].listModel[s].clusterId].minmax;
+				Cloud::Ptr bbox = toCloud(createBoundingBox(minmax->points[0], minmax->points[1]));
+
+				Edges edgesBox = createEdgesForBoundingBox();
+				if (saveBarInFile)
+					merge(cloudBar, edgesBar, bbox, edgesBox);
+				merge(cloudOutput, edgesOutput, bbox, edgesBox);
+			}
+
+			if (saveBarInFile)
+				savePLYEdges(createFilename(barFilename, b), cloudBar, edgesBar);
+		}
+
+		std::cerr << "Output Cloud with Edges: " << outFilename << " Size: " << cloudOutput->points.size() << " Edges: " << edgesOutput.size() << std::endl;
+		savePLYEdges(outFilename, cloudOutput, edgesOutput);
 }
 
 void saveBars(std::vector<Bar>& bars, std::string outFilename, std::string barFilename, bool saveBarInFile = false)
@@ -2572,6 +2603,7 @@ int main (int argc, char** argv)
 		std::vector<Bar> bars = extractBars(network);
 
 		dumpBars(bars, clusters);
+		saveBBoxForBars(bars, clusters, createFilename(outFilename, 0), barFilename, false);
 
 		unsigned num = 0;
 
