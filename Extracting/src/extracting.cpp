@@ -52,8 +52,6 @@ int filter(std::string file)
 
 	pcl::io::loadPLYFile(file, *cloud);
 
-	//TODO: Orginal muss noch gedownsampelt werden
-
 	std::cout << "PointCloud before filtering has: " << cloud->points.size () << " data points." << std::endl; //*
 
 	// das morphologische Filterobjekt wird erstellt
@@ -276,13 +274,15 @@ int merge(std::string orginal){
 	  return (0);
 }
 
-int main()
+int main(std::string input_downsampelt_pcd, std::string input_orginal_pcd)
 {
-	filter("merged.pcd");
+	filter(input_downsampelt_pcd);
+    //euklidische Clusterung, welche die (Balkenstümpfe,Clustertoleranz, Cloud Min Größe, Cloud Max Größe) als Input nimmt
 	euclidean_cluster_extraction("balken_stuempfe.ply",0.2,10,200);
 	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
 	min_cut("balkenwerk.ply","center.ply",500);
-	merge("gesamt.pcd");
+    // zusammenführen der gedownsampelten Balken mit den orginalen und damit Erhöhung der Punktdichte
+	merge(input_orginal_pcd);
 	cout <<" ready";
 
 	return (0);
