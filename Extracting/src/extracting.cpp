@@ -274,15 +274,16 @@ int merge(std::string orginal){
 	  return (0);
 }
 
-int main(std::string input_downsampelt_pcd, std::string input_orginal_pcd)
+int main()
 {
-	filter(input_downsampelt_pcd);
+	//PassThrough Filter und Morphologisches segmentieren mit der gedownsampelten Cloud
+	filter("merged.pcd");
     //euklidische Clusterung, welche die (Balkenstümpfe,Clustertoleranz, Cloud Min Größe, Cloud Max Größe) als Input nimmt
 	euclidean_cluster_extraction("balken_stuempfe.ply",0.2,10,200);
 	//min_cut(Cloud aus welcher die Balken extrahiert werden sollen, Mittelpunkte, mindestmenge eines Balkens)
 	min_cut("balkenwerk.ply","center.ply",500);
     // zusammenführen der gedownsampelten Balken mit den orginalen und damit Erhöhung der Punktdichte
-	merge(input_orginal_pcd);
+	merge("gesamt.pcd");
 	cout <<" ready";
 
 	return (0);
