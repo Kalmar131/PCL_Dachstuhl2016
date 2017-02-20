@@ -1837,7 +1837,7 @@ void calcLineCenter(std::vector<Bar>& bars)
 	}
 }
 
-void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
+void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters, bool fit = true)
 {
 		float sumDist1 = 0;
 		float sumDist2 = 0;
@@ -1852,8 +1852,7 @@ void fitModels(std::vector<Bar>& bars, std::vector<Cluster>& clusters)
 					continue;
 
 				float dist1 = model.getMeanDist(clusters[model.clusterId].cloud);
-				//float dist2 = dist1;
-				float dist2 = model.fitPlanes(clusters[model.clusterId].cloud, dist1);
+				float dist2 = fit ? model.fitPlanes(clusters[model.clusterId].cloud, dist1): dist1;
 				sumDist1 += dist1;
 				sumDist2 += dist2;
 				n += 1;
@@ -2613,6 +2612,7 @@ int main (int argc, char** argv)
 			printf("extract models\n");
 			num += extractModels(bars, clusters, numRansacIterations, minNumInliersFactor, maxNumOutliersFactor, 0.98, 0.5);
 			printf("phase 1: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			fitModels(bars, clusters, false);
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 1), barFilename);
 		}
@@ -2623,6 +2623,7 @@ int main (int argc, char** argv)
 			printf("clone models inside bar\n");
 			num += cloneModelInsideBar(bars, clusters);
 			printf("phase 2: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			fitModels(bars, clusters, false);
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 2), barFilename);
 		}
@@ -2641,6 +2642,7 @@ int main (int argc, char** argv)
 			printf("approximate models\n");
 			num += approximateModels(bars, clusters);
 			printf("phase 4: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			fitModels(bars, clusters, false);
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 4), barFilename, true);
 		}
@@ -2653,6 +2655,7 @@ int main (int argc, char** argv)
 			printf("merge bars\n");
 			num += mergeBars(bars, clusters, sliceSize, 0.09, 0.98);
 			printf("phase 5: reconstructed %d of %d clusters\n", num, (unsigned)clusters.size());
+			fitModels(bars, clusters, false);
 			dumpBars(bars, clusters);
 			saveBars(bars, createFilename(outFilename, 5), barFilename);
 		}
